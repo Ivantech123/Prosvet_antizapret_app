@@ -9,6 +9,7 @@ use anyhow::{anyhow, bail, Result};
 use serde::Serialize;
 use tauri::{AppHandle, Emitter};
 
+use crate::aidns::AiDns;
 use crate::engine::{Engine, Log};
 use crate::paths::{Paths, IPSET_NONE};
 use crate::settings::{self, IpsetMode, Score, Settings, State};
@@ -51,6 +52,15 @@ pub struct Status {
     pub progress: Option<Progress>,
     pub checked_at: Option<u64>,
     pub conflicts: Vec<Conflict>,
+    /// ИИ-сервисы: None — функция выключена, Some(ok) — результат проверки.
+    pub ai: Option<AiState>,
+}
+
+#[derive(Clone, Debug, Serialize)]
+pub struct AiState {
+    /// checking | ok | blocked | error
+    pub state: String,
+    pub detail: Option<String>,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -72,6 +82,7 @@ pub struct Controller {
     op: tokio::sync::Mutex<()>,
     cancel: AtomicBool,
     watchdog_fails: AtomicU32,
+    ai: AiDns,
 }
 
 fn now() -> u64 {
@@ -106,6 +117,7 @@ impl Controller {
             op: tokio::sync::Mutex::new(()),
             cancel: AtomicBool::new(false),
             watchdog_fails: AtomicU32::new(0),
+            ai: AiDns::new(),
             paths,
         })
     }
@@ -432,6 +444,34 @@ impl Controller {
 
     // ------------------------------------------------------------ настройки
 
+    // ------------------------------------------------------------ ИИ-сервисы
+
+    /// Включает/выключает умный DNS согласно настройкам и проверяет доступ.
+    pub async fn apply_ai(self: &Arc<Self>) {
+        let set = self.settings();
+        if !set.ai_unlock {
+            self.ai.stop();
+            self.update(|st| st.ai = None);
+            return;
+        }
+        self.update(|st| st.ai = Some(AiState { state: "checking".into(), detail: None }));
+        if let Err(e) = self.ai.start(&set.ai_provider, &self.log).await {
+            self.log.push(format!("Ошибка: ИИ-сервисы — {e}"));
+            self.update(|st| st.ai = Some(AiState { state: "error".into(), detail: Some(e.to_string()) }));
+            return;
+        }
+        self.check_ai().await;
+    }
+
+    async fn check_ai(&self) {
+        if !self.settings().ai_unlock {
+            return;
+        }
+        let ok = crate::aidns::probe().await;
+        self.log.push(if ok { "✓ ИИ-сервисы доступны" } else { "✗ ИИ-сервисы: геоблок не снят" });
+        self.update(|st| st.ai = Some(AiState { state: if ok { "ok" } else { "blocked" }.into(), detail: None }));
+    }
+
     pub async fn apply_settings(self: &Arc<Self>, mut new: Settings) -> Result<()> {
         let old = self.settings();
         // Стратегией управляет только бэкенд (автоподбор/ручной выбор).
@@ -443,8 +483,12 @@ impl Controller {
             self.write_ipset(new.ipset)?;
         }
         let restart = new.game_filter != old.game_filter || new.ipset != old.ipset;
+        let ai_changed = new.ai_unlock != old.ai_unlock || new.ai_provider != old.ai_provider;
         *self.settings.lock().unwrap() = new;
         self.save_settings();
+        if ai_changed {
+            self.apply_ai().await;
+        }
         if restart {
             self.restart_if_running().await?;
         }
@@ -542,7 +586,11 @@ impl Controller {
             loop {
                 let interval = me.settings().watchdog_interval.max(60);
                 tokio::time::sleep(Duration::from_secs(interval)).await;
-                if !me.settings().watchdog || me.status().mode != Mode::On {
+                if !me.settings().watchdog {
+                    continue;
+                }
+                if me.status().mode != Mode::On {
+                    me.check_ai().await;
                     continue;
                 }
                 me.watchdog_tick().await;
@@ -551,6 +599,7 @@ impl Controller {
     }
 
     async fn watchdog_tick(self: &Arc<Self>) {
+        self.check_ai().await;
         let Ok(guard) = self.op.try_lock() else { return };
         let id = self.engine.lock().unwrap().current.clone();
         let Some(s) = id.and_then(|id| self.find(&id)) else { return };
@@ -584,6 +633,7 @@ impl Controller {
 
     pub fn shutdown(&self) {
         self.stop_engine();
+        self.ai.stop();
     }
 }
 

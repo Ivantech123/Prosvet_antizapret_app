@@ -1,3 +1,4 @@
+mod aidns;
 mod controller;
 mod engine;
 mod paths;
@@ -236,6 +237,8 @@ pub fn run() {
                 Err(e) => eprintln!("не удалось развернуть движки: {e:#}"),
             }
 
+            // правила NRPT могли остаться после аварийного завершения
+            aidns::remove_nrpt();
             let c = Controller::new(handle.clone(), paths);
             app.manage(c.clone());
             tray::build(&handle)?;
@@ -251,6 +254,10 @@ pub fn run() {
                 tauri::async_runtime::spawn(async move {
                     let _ = c2.enable().await;
                 });
+            }
+            {
+                let c3 = c.clone();
+                tauri::async_runtime::spawn(async move { c3.apply_ai().await });
             }
             c.spawn_watchdog();
             Ok(())

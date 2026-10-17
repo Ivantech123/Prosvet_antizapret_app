@@ -49,6 +49,9 @@ const SERVICES = {
   },
 };
 
+const AI = { name: "ИИ", color: "#b98cff", path: "M12 1.5l2.6 7.1 7.4 2.9-7.4 2.9L12 21.5l-2.6-7.1L2 11.5l7.4-2.9z" };
+const AI_STATE = { checking: ["", "Проверяю…"], ok: ["ok", "<b>Доступны</b>"], blocked: ["bad", "<b>Геоблок</b>"], error: ["bad", "<b>Ошибка</b>"] };
+
 const WORD = { off: "Выключено", starting: "Запуск", on: "Работает", testing: "Ищу просвет", updating: "Обновляю", error: "Ошибка" };
 const EYEBROW = { off: "Обход блокировок", starting: "Секунду", on: "Обход включён", testing: "Подбор стратегии", updating: "Движки", error: "Что-то пошло не так" };
 const CTA = { off: "Включить", starting: "Запуск…", on: "Выключить", testing: "Остановить", updating: "Обновление…", error: "Попробовать снова" };
@@ -111,24 +114,34 @@ function go(p) {
 
 /* ───────────── главная ───────────── */
 
-function svcState(s) {
+function svcState(s, short = false) {
   if (!s || !s.total) return ["", "Не проверено"];
-  if (s.ok === s.total) return ["ok", `<b>Работает</b> · ${s.ms} мс`];
+  if (s.ok === s.total) return ["ok", short ? "<b>Работает</b>" : `<b>Работает</b> · ${s.ms} мс`];
   if (s.ok === 0) return ["bad", "<b>Недоступен</b>"];
   return ["warn", `<b>Частично</b> · ${s.ok}/${s.total}`];
 }
 
+function svcTile(m, cls, text, title = "") {
+  return `<div class="svc ${cls}" title="${esc(title)}">
+    <div class="svc-logo" style="color:${m.color};background:${m.color}22"><svg viewBox="0 0 24 24"><path d="${m.path}"/></svg></div>
+    <div class="svc-text"><div class="svc-name">${m.name}</div><div class="svc-state">${text}</div></div>
+  </div>`;
+}
+
 function renderServices() {
   const byId = Object.fromEntries((status.services || []).map((s) => [s.id, s]));
-  $("#services").innerHTML = Object.entries(SERVICES)
-    .map(([id, m]) => {
-      const [cls, text] = svcState(byId[id]);
-      return `<div class="svc ${cls}">
-        <div class="svc-logo" style="color:${m.color};background:${m.color}22"><svg viewBox="0 0 24 24"><path d="${m.path}"/></svg></div>
-        <div class="svc-text"><div class="svc-name">${m.name}</div><div class="svc-state">${text}</div></div>
-      </div>`;
-    })
-    .join("");
+  const short = !!status.ai; // пять плиток — без задержки, она во всплывающей подсказке
+  const tiles = Object.entries(SERVICES).map(([id, m]) => {
+    const s = byId[id];
+    return svcTile(m, ...svcState(s, short), s && s.ok ? `${s.ms} мс` : "");
+  });
+  if (status.ai) {
+    const [cls, text] = AI_STATE[status.ai.state] || ["", ""];
+    tiles.push(svcTile(AI, cls, text, status.ai.detail || "Gemini, ChatGPT, Claude через умный DNS"));
+  }
+  const dock = $("#services");
+  dock.style.setProperty("--n", tiles.length);
+  dock.innerHTML = tiles.join("");
 }
 
 function renderBanners() {
@@ -138,6 +151,12 @@ function renderBanners() {
     out.push(`<div class="glass banner bad">
       <div class="banner-text"><b>Работает другой обход.</b> <span>${esc(names)} — вместе они мешают друг другу.</span></div>
       <button class="btn small" data-act="resolve">Остановить</button>
+    </div>`);
+  }
+  if (status.ai && status.ai.state === "error") {
+    out.push(`<div class="glass banner bad">
+      <div class="banner-text"><b>ИИ-сервисы не включились.</b> <span>${esc(status.ai.detail || "")}</span></div>
+      <button class="btn small" data-act="ai-off">Выключить</button>
     </div>`);
   }
   if (info && !info.defender_ok) {
@@ -447,6 +466,7 @@ function bind() {
     const act = e.target.closest("[data-act]")?.dataset.act;
     if (act === "resolve") api.invoke("resolve_conflicts").then(() => toast("Остановлено"));
     if (act === "defender") addDefender();
+    if (act === "ai-off") saveSetting("ai_unlock", false);
   };
 
   $("#strategy-filter").onclick = (e) => {
@@ -567,7 +587,7 @@ function mockApi() {
   const handlers = {};
   const emit = (ev, p) => (handlers[ev] || []).forEach((f) => f(p));
   let st = { mode: "off", services: [], conflicts: [], strategy: null, progress: null, message: null, checked_at: null };
-  let set = { enable_on_launch: true, autostart: false, watchdog: true, watchdog_interval: 180, fast_select: true, close_to_tray: true, game_filter: "off", ipset: "none", theme: "system", onboarded: true };
+  let set = { enable_on_launch: true, autostart: false, watchdog: true, watchdog_interval: 180, fast_select: true, close_to_tray: true, game_filter: "off", ipset: "none", theme: "system", onboarded: true, ai_unlock: true, ai_provider: "auto" };
   const strategies = [
     ["z2-seqovl-google", "Seqovl · Google", "z2", "multisplit с перекрытием seq фейковым ClientHello google.com"],
     ["z2-fake-disorder-md5", "Fake + disorder · MD5", "z2", "фейк с подменой SNI и MD5-подписью, затем сегменты в обратном порядке"],
@@ -586,7 +606,7 @@ function mockApi() {
       i++;
       if (i > 4) {
         clearInterval(t);
-        push({ mode: "on", message: null, progress: null, strategy: { id: "z2-seqovl-google", name: "Seqovl · Google" }, services: svc(true), checked_at: Date.now() / 1000 });
+        push({ mode: "on", message: null, progress: null, strategy: { id: "z2-seqovl-google", name: "Seqovl · Google" }, services: svc(true), checked_at: Date.now() / 1000, ai: { state: "ok" } });
         emit("log", "12:00:05 ★ выбрана «Seqovl · Google» (11/11)");
         return;
       }

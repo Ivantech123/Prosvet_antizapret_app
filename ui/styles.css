@@ -300,10 +300,10 @@ body[data-mode="error"] .cta-ring { background: var(--bad); }
 /* док сервисов */
 .dock {
   position: absolute; left: 50%; bottom: 20px; transform: translateX(-50%);
-  width: min(780px, calc(100% - 40px));
-  display: grid; grid-template-columns: repeat(4, 1fr); gap: 4px; padding: 6px; border-radius: 24px;
+  width: min(900px, calc(100% - 40px));
+  display: grid; grid-template-columns: repeat(var(--n, 4), 1fr); gap: 4px; padding: 6px; border-radius: 24px;
 }
-.svc { display: flex; align-items: center; gap: 12px; padding: 10px 12px; border-radius: 18px; transition: background 0.2s; }
+.svc { display: flex; align-items: center; gap: 12px; padding: 10px 12px; min-width: 0; border-radius: 18px; transition: background 0.2s; }
 .svc:hover { background: var(--line); }
 .svc-logo { width: 38px; height: 38px; border-radius: 12px; display: grid; place-items: center; flex: none; position: relative; }
 .svc-logo svg { width: 19px; height: 19px; fill: currentColor; stroke: none; }
@@ -316,7 +316,7 @@ body[data-mode="error"] .cta-ring { background: var(--bad); }
 .svc.bad .svc-logo::after { background: var(--bad); }
 .svc-text { min-width: 0; }
 .svc-name { font-weight: 800; font-size: 13.5px; }
-.svc-state { font-size: 12px; color: var(--muted); white-space: nowrap; font-variant-numeric: tabular-nums; }
+.svc-state { font-size: 12px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-variant-numeric: tabular-nums; }
 .svc.ok .svc-state b { color: var(--ok); font-weight: 700; }
 .svc.warn .svc-state b { color: var(--warn); font-weight: 700; }
 .svc.bad .svc-state b { color: var(--bad); font-weight: 700; }

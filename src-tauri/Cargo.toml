@@ -1,6 +1,6 @@
 [package]
 name = "prosvet"
-version = "0.1.0"
+version = "0.2.0"
 description = "Prosvet — красивый обход DPI-блокировок для Windows на базе zapret"
 authors = ["Prosvet contributors"]
 license = "MIT"

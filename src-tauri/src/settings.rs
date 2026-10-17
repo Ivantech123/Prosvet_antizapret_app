@@ -62,6 +62,10 @@ pub struct Settings {
     pub theme: String,
     /// Пройдено ли приветствие при первом запуске.
     pub onboarded: bool,
+    /// Разблокировка ИИ-сервисов через умный DNS.
+    pub ai_unlock: bool,
+    /// auto | comss | geohide
+    pub ai_provider: String,
 }
 
 impl Default for Settings {
@@ -78,6 +82,8 @@ impl Default for Settings {
             strategy: None,
             theme: "system".into(),
             onboarded: false,
+            ai_unlock: false,
+            ai_provider: "auto".into(),
         }
     }
 }
