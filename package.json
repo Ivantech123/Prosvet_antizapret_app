@@ -1,0 +1,14 @@
+{
+  "name": "prosvet",
+  "private": true,
+  "version": "0.1.0",
+  "scripts": {
+    "tauri": "tauri",
+    "dev": "tauri dev",
+    "build": "tauri build",
+    "engine": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/fetch-engine.ps1"
+  },
+  "devDependencies": {
+    "@tauri-apps/cli": "^2"
+  }
+}

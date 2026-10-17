@@ -1,0 +1,287 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Prosvet</title>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body data-page="home">
+  <canvas id="sky" aria-hidden="true"></canvas>
+  <div class="veil" aria-hidden="true"></div>
+
+  <header class="titlebar" data-tauri-drag-region>
+    <div class="brand" data-tauri-drag-region>
+      <span class="brand-mark" data-tauri-drag-region></span>
+      <span class="brand-name" data-tauri-drag-region>Prosvet</span>
+    </div>
+    <nav class="tabs" id="tabs">
+      <span class="tab-ink" id="tab-ink"></span>
+      <button class="tab on" data-page="home">Главная</button>
+      <button class="tab" data-page="strategies">Стратегии</button>
+      <button class="tab" data-page="lists">Списки</button>
+      <button class="tab" data-page="log">Журнал</button>
+      <button class="tab" data-page="settings">Настройки</button>
+    </nav>
+    <div class="win-buttons">
+      <button class="win-btn" id="win-min" title="Свернуть" aria-label="Свернуть">
+        <svg viewBox="0 0 12 12"><path d="M2 6h8" /></svg>
+      </button>
+      <button class="win-btn close" id="win-close" title="Закрыть" aria-label="Закрыть">
+        <svg viewBox="0 0 12 12"><path d="M2.5 2.5l7 7M9.5 2.5l-7 7" /></svg>
+      </button>
+    </div>
+  </header>
+
+  <main class="main">
+    <!-- ───────────── Главная ───────────── -->
+    <section class="page home active" id="page-home">
+      <div class="banners" id="banners"></div>
+
+      <div class="stage">
+        <div class="eyebrow" id="eyebrow">Обход блокировок</div>
+        <h1 class="status-word" id="hero-title">Выключено</h1>
+        <p class="status-line" id="hero-sub">Нажмите, чтобы впустить свет</p>
+
+        <button class="cta" id="power">
+          <span class="cta-ring"></span>
+          <svg viewBox="0 0 24 24"><path d="M12 3.5v8" /><path d="M6.6 7.2a7.5 7.5 0 1 0 10.8 0" /></svg>
+          <span id="cta-text">Включить</span>
+        </button>
+
+        <div class="scan" id="progress" hidden>
+          <div class="scan-track"><span id="progress-fill"></span></div>
+          <div class="scan-text" id="progress-text"></div>
+        </div>
+
+        <div class="quick" id="quick">
+          <button class="link" id="btn-check">
+            <svg viewBox="0 0 24 24"><path d="M20 12a8 8 0 1 1-2.3-5.7" /><path d="M20 4v5h-5" /></svg>Проверить
+          </button>
+          <button class="link" id="btn-reselect">
+            <svg viewBox="0 0 24 24"><path d="M12 3l2.4 5 5.6.8-4 3.9.9 5.5L12 15.6 7.1 18.2 8 12.7 4 8.8 9.6 8z" /></svg>Подобрать заново
+          </button>
+          <button class="link danger" id="btn-cancel" hidden>Остановить подбор</button>
+        </div>
+      </div>
+
+      <div class="dock" id="services"></div>
+    </section>
+
+    <!-- ───────────── Стратегии ───────────── -->
+    <section class="page" id="page-strategies">
+      <div class="page-head">
+        <div>
+          <h2>Стратегии</h2>
+          <p class="sub">Prosvet сам выбирает лучшую. Здесь — результаты проверок и ручной выбор.</p>
+        </div>
+        <button class="btn primary" id="btn-auto">
+          <svg viewBox="0 0 24 24"><path d="M12 3l2.4 5 5.6.8-4 3.9.9 5.5L12 15.6 7.1 18.2 8 12.7 4 8.8 9.6 8z" /></svg>Автоподбор
+        </button>
+      </div>
+      <div class="seg" id="strategy-filter">
+        <button data-f="all" class="on">Все</button>
+        <button data-f="z2">zapret2</button>
+        <button data-f="z1">Flowseal</button>
+        <button data-f="ok">Рабочие</button>
+      </div>
+      <div class="strategy-list" id="strategy-list"></div>
+    </section>
+
+    <!-- ───────────── Списки ───────────── -->
+    <section class="page" id="page-lists">
+      <div class="page-head">
+        <div>
+          <h2>Списки</h2>
+          <p class="sub">Свои домены и исключения — по одному на строку, поддомены учитываются сами.</p>
+        </div>
+      </div>
+      <div class="seg" id="list-tabs">
+        <button data-list="list-general-user.txt" class="on">Обходить</button>
+        <button data-list="list-exclude-user.txt">Не трогать</button>
+        <button data-list="ipset-exclude-user.txt">Исключить IP</button>
+      </div>
+      <div class="glass editor">
+        <p class="hint" id="list-help"></p>
+        <textarea id="list-editor" spellcheck="false"></textarea>
+      </div>
+      <div class="row end">
+        <span class="sub" id="list-saved"></span>
+        <button class="btn primary" id="btn-save-list">Сохранить</button>
+      </div>
+    </section>
+
+    <!-- ───────────── Журнал ───────────── -->
+    <section class="page" id="page-log">
+      <div class="page-head">
+        <div>
+          <h2>Журнал</h2>
+          <p class="sub">Что делает Prosvet и что отвечает движок.</p>
+        </div>
+        <button class="btn" id="btn-copy-log">Скопировать</button>
+      </div>
+      <pre class="glass log" id="log"></pre>
+    </section>
+
+    <!-- ───────────── Настройки ───────────── -->
+    <section class="page" id="page-settings">
+      <div class="page-head"><div><h2>Настройки</h2></div></div>
+
+      <div class="glass card">
+        <h3>Работа</h3>
+        <label class="toggle"><span><b>Включать при запуске</b><small>Обход стартует, как только открылось приложение</small></span><input type="checkbox" data-key="enable_on_launch" /><i></i></label>
+        <label class="toggle"><span><b>Запускать вместе с Windows</b><small>Тихо, в трее, без запроса прав</small></span><input type="checkbox" data-key="autostart" /><i></i></label>
+        <label class="toggle"><span><b>Сторож</b><small>Сам меняет стратегию, если провайдер что-то поменял</small></span><input type="checkbox" data-key="watchdog" /><i></i></label>
+        <label class="toggle"><span><b>Быстрый подбор</b><small>Остановиться на первой стратегии, прошедшей все проверки</small></span><input type="checkbox" data-key="fast_select" /><i></i></label>
+        <label class="toggle"><span><b>Сворачивать в трей</b><small>Крестик прячет окно, обход продолжает работать</small></span><input type="checkbox" data-key="close_to_tray" /><i></i></label>
+      </div>
+
+      <div class="glass card">
+        <h3>Фильтры</h3>
+        <div class="field">
+          <span><b>Игровой фильтр</b><small>Игры на нестандартных портах · стратегии Flowseal</small></span>
+          <div class="seg" data-key="game_filter">
+            <button data-v="off">Выкл</button><button data-v="tcp">TCP</button><button data-v="udp">UDP</button><button data-v="all">Всё</button>
+          </div>
+        </div>
+        <div class="field">
+          <span><b>База IP-адресов</b><small>Для сервисов за Cloudflare и игровых серверов</small></span>
+          <div class="seg" data-key="ipset">
+            <button data-v="none">Нет</button><button data-v="loaded">Загружена</button><button data-v="any">Все IP</button>
+          </div>
+        </div>
+      </div>
+
+      <div class="glass card">
+        <h3>Оформление</h3>
+        <div class="field">
+          <span><b>Тема</b><small>По умолчанию — как в Windows</small></span>
+          <div class="seg" data-key="theme">
+            <button data-v="system">Системная</button><button data-v="light">Светлая</button><button data-v="dark">Тёмная</button>
+          </div>
+        </div>
+      </div>
+
+      <div class="glass card">
+        <h3>Движки</h3>
+        <div class="field">
+          <span><b>Версии</b><small id="engine-versions">—</small></span>
+          <div class="row">
+            <button class="btn" id="btn-check-upd">Проверить</button>
+            <button class="btn primary" id="btn-update">Обновить</button>
+          </div>
+        </div>
+        <div class="field">
+          <span><b>Microsoft Defender</b><small id="defender-text">Проверяю…</small></span>
+          <button class="btn" id="btn-defender">Добавить исключение</button>
+        </div>
+        <div class="field">
+          <span><b>Папка данных</b><small id="data-dir">—</small></span>
+          <button class="btn" id="btn-open-dir">Открыть</button>
+        </div>
+      </div>
+
+      <div class="glass card about">
+        <div class="about-mark"></div>
+        <div>
+          <b>Prosvet <span id="app-version"></span></b>
+          <p class="sub">Открытая оболочка над
+            <a href="#" data-url="https://github.com/bol-van/zapret2">zapret2</a> и
+            <a href="#" data-url="https://github.com/bol-van/zapret">zapret</a> от bol-van,
+            стратегии <a href="#" data-url="https://github.com/Flowseal/zapret-discord-youtube">Flowseal</a>,
+            драйвер <a href="#" data-url="https://github.com/basil00/WinDivert">WinDivert</a>.
+            Трафик никуда не уходит — всё работает на вашем компьютере.</p>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <!-- ───────────── Приветствие ───────────── -->
+  <div class="onb" id="onb" hidden>
+    <div class="onb-stage">
+      <section class="onb-step" data-step="0">
+        <div class="onb-kicker">Знакомьтесь</div>
+        <h1 class="onb-title">Prosvet</h1>
+        <p class="onb-lead">Немного света сквозь блокировки. YouTube, Discord и&nbsp;остальное снова работают — без VPN, серверов и&nbsp;подписок.</p>
+        <button class="btn primary big" data-next>Начать
+          <svg viewBox="0 0 24 24"><path d="M5 12h14M13 6l6 6-6 6" /></svg>
+        </button>
+      </section>
+
+      <section class="onb-step" data-step="1">
+        <div class="onb-kicker">Как это работает</div>
+        <h2 class="onb-h">Три простые вещи</h2>
+        <div class="feats">
+          <div class="glass feat">
+            <span class="feat-n">01</span>
+            <div><b>Всё на вашем компьютере</b><span>Трафик никуда не уходит. Prosvet по-хитрому нарезает пакеты, и фильтр провайдера их не узнаёт.</span></div>
+          </div>
+          <div class="glass feat">
+            <span class="feat-n">02</span>
+            <div><b>Сам подбирает настройки</b><span>Проверит десятки стратегий zapret и выберет ту, что работает у вашего провайдера.</span></div>
+          </div>
+          <div class="glass feat">
+            <span class="feat-n">03</span>
+            <div><b>Следит за работой</b><span>Провайдер что-то поменял — Prosvet заметит и перестроится сам. Живёт в трее и не мешает.</span></div>
+          </div>
+        </div>
+        <div class="onb-nav">
+          <button class="btn" data-prev>Назад</button>
+          <button class="btn primary" data-next>Дальше</button>
+        </div>
+      </section>
+
+      <section class="onb-step" data-step="2">
+        <div class="onb-kicker">Подготовка</div>
+        <h2 class="onb-h">Пара мелочей</h2>
+        <div class="checks">
+          <div class="glass check" id="onb-defender">
+            <div class="check-icon"></div>
+            <div class="check-text"><b>Microsoft Defender</b><span>Проверяю…</span></div>
+            <button class="btn small" hidden>Добавить исключение</button>
+          </div>
+          <div class="glass check" id="onb-conflicts">
+            <div class="check-icon"></div>
+            <div class="check-text"><b>Другие обходы</b><span>Проверяю…</span></div>
+            <button class="btn small" hidden>Остановить</button>
+          </div>
+          <label class="glass check">
+            <div class="check-icon ok"></div>
+            <div class="check-text"><b>Запускать вместе с Windows</b><span>Тихо, в трее, без запроса прав</span></div>
+            <span class="toggle bare"><input type="checkbox" id="onb-autostart" checked /><i></i></span>
+          </label>
+        </div>
+        <div class="onb-nav">
+          <button class="btn" data-prev>Назад</button>
+          <button class="btn primary" id="onb-go">Впустить свет
+            <svg viewBox="0 0 24 24"><path d="M5 12h14M13 6l6 6-6 6" /></svg>
+          </button>
+        </div>
+      </section>
+
+      <section class="onb-step final" data-step="3">
+        <div class="onb-kicker" id="onb-kicker">Подбор стратегии</div>
+        <h2 class="onb-h big" id="onb-title">Ищу просвет…</h2>
+        <p class="onb-lead small" id="onb-sub">Смотрю, что заблокировано у вашего провайдера</p>
+        <div class="scan" id="onb-progress">
+          <div class="scan-track"><span id="onb-fill"></span></div>
+          <div class="scan-text" id="onb-ptext"></div>
+        </div>
+        <div class="chips" id="onb-chips"></div>
+        <div class="onb-nav">
+          <button class="btn" id="onb-skip">Пропустить</button>
+          <button class="btn primary big" id="onb-done" hidden>Готово
+            <svg viewBox="0 0 24 24"><path d="M5 12h14M13 6l6 6-6 6" /></svg>
+          </button>
+          <button class="btn primary" id="onb-retry" hidden>Попробовать снова</button>
+        </div>
+      </section>
+    </div>
+    <div class="onb-dots" id="onb-dots"><i></i><i></i><i></i><i></i></div>
+  </div>
+
+  <div class="toast" id="toast"></div>
+  <script src="scene.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>

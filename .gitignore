@@ -1,0 +1,8 @@
+# сборка
+/node_modules
+/src-tauri/target
+/src-tauri/gen
+/.engine-tmp
+
+# движки скачиваются скриптом: npm run engine
+/src-tauri/resources/engine
