@@ -106,6 +106,7 @@ function go(p) {
   $$(".tab").forEach((t) => t.classList.toggle("on", t.dataset.page === p));
   $$(".page").forEach((s) => s.classList.toggle("active", s.id === `page-${p}`));
   moveInk();
+  scene.setInner(p !== "home");
   if (p === "strategies") loadStrategies();
   if (p === "lists") loadList();
   if (p === "settings") loadInfo().catch(() => {});
@@ -182,6 +183,7 @@ function renderStatus() {
     sub = status.strategy ? `<span class="chip gold">${esc(status.strategy.name)}</span>` : "";
     if (status.message) sub += `<span>${esc(status.message)}</span>`;
     else if (status.checked_at) sub += `<span>проверено в ${timeOf(status.checked_at)}</span>`;
+    if (settings.schedule && settings.schedule_time) sub += `<span class="next" title="Подбор по расписанию"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.5" /><path d="M12 7.5V12l3 2" /></svg>подбор в ${esc(settings.schedule_time)}</span>`;
   } else if (m === "off") sub = "Нажмите — и пусть будет свет";
   else sub = esc(status.message || "");
   $("#hero-sub").innerHTML = sub;
@@ -206,34 +208,64 @@ function renderStatus() {
 /* ───────────── стратегии ───────────── */
 
 let stratFilter = "all";
+let stratKey = "";
+
+const SUN = '<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="4" /><path d="M12 2.5v2M12 19.5v2M4.6 4.6 6 6M18 18l1.4 1.4M2.5 12h2M19.5 12h2M4.6 19.4 6 18M18 6l1.4-1.4" /></svg>';
+const full = (sc) => sc && sc.total && sc.passed === sc.total;
+
+function scoreHtml(sc) {
+  if (!sc || !sc.total) {
+    return `<div class="score"><div class="score-top"><span>не проверялась</span></div><div class="pips none">${"<i></i>".repeat(11)}</div></div>`;
+  }
+  const pct = sc.passed / sc.total;
+  const cls = pct === 1 ? "ok" : pct >= 0.5 ? "warn" : "bad";
+  const pips = Array.from({ length: sc.total }, (_, i) => `<i class="${i < sc.passed ? "on" : ""}"></i>`).join("");
+  return `<div class="score">
+    <div class="score-top"><b>${sc.passed}<small>/${sc.total}</small></b><span>${(sc.latency_ms / 1000).toFixed(1)} с</span></div>
+    <div class="pips ${cls}">${pips}</div>
+  </div>`;
+}
 
 async function loadStrategies() {
   const list = await api.invoke("get_strategies");
+  // лучшая — больше всех проверок, при равенстве быстрее
+  const best = list
+    .filter((s) => s.score && s.score.total && s.score.passed)
+    .sort((a, b) => b.score.passed / b.score.total - a.score.passed / a.score.total || a.score.latency_ms - b.score.latency_ms)[0];
+  const tested = list.filter((s) => s.score && s.score.total).length;
+  const working = list.filter((s) => full(s.score)).length;
+  $("#strat-stats").innerHTML =
+    `<span class="stat"><b>${list.length}</b>всего</span>` +
+    (tested ? `<span class="stat"><b>${tested}</b>проверено</span>` : "") +
+    (working ? `<span class="stat ok"><b>${working}</b>работают</span>` : "");
+
   const filtered = list.filter((s) => {
     if (stratFilter === "z1" || stratFilter === "z2") return s.engine === stratFilter;
-    if (stratFilter === "ok") return s.score && s.score.total && s.score.passed === s.score.total;
+    if (stratFilter === "ok") return full(s.score);
     return true;
   });
-  $("#strategy-list").innerHTML =
+  const html =
     filtered
-      .map((s) => {
-        const sc = s.score;
-        let bar;
-        if (sc && sc.total) {
-          const pct = Math.round((sc.passed / sc.total) * 100);
-          const cls = pct === 100 ? "ok" : pct >= 50 ? "warn" : "bad";
-          bar = `<div class="score"><span>${sc.passed}/${sc.total} · ${sc.latency_ms} мс</span><div class="score-bar"><span class="${cls}" style="width:${pct}%"></span></div></div>`;
-        } else bar = `<div class="score"><span>не проверялась</span><div class="score-bar"></div></div>`;
-        return `<div class="glass strat ${s.active ? "active" : ""}">
+      .map((s, i) => {
+        const top = best && s.id === best.id;
+        const n = list.indexOf(s) + 1;
+        return `<div class="glass strat ${s.active ? "active" : ""} ${top ? "top" : ""}" style="--i:${Math.min(i, 12)}">
+          <div class="rank" title="${s.active ? "Сейчас работает" : top ? "Лучшая по проверкам" : ""}">${s.active ? SUN : String(n).padStart(2, "0")}</div>
           <div style="min-width:0">
-            <div class="strat-name">${esc(s.name)} <span class="tag ${s.engine}">${s.engine === "z2" ? "zapret2" : "zapret"}</span>${s.active ? '<span class="tag live">активна</span>' : ""}</div>
+            <div class="strat-name">${esc(s.name)} <span class="tag ${s.engine}">${s.engine === "z2" ? "zapret2" : "zapret"}</span>${top && !s.active ? '<span class="tag z2">лучшая</span>' : ""}</div>
             <div class="strat-hint" title="${esc(s.hint)}">${esc(s.hint)}</div>
           </div>
-          ${bar}
+          ${scoreHtml(s.score)}
           <button class="btn small" data-run="${esc(s.id)}" ${s.active || busy(status.mode) ? "disabled" : ""}>${s.active ? "Работает" : "Включить"}</button>
         </div>`;
       })
       .join("") || `<p class="sub">Здесь пока пусто.</p>`;
+  // анимация появления — только когда список действительно сменился, а не на каждый статус
+  const key = stratFilter + "|" + filtered.map((s) => s.id).join();
+  const el = $("#strategy-list");
+  el.classList.toggle("quiet", key === stratKey);
+  stratKey = key;
+  el.innerHTML = html;
 }
 
 /* ───────────── списки ───────────── */
@@ -250,20 +282,51 @@ async function loadList() {
   $("#list-help").textContent = LIST_HELP[currentList];
   $("#list-editor").value = await api.invoke("get_list", { name: currentList });
   $("#list-saved").textContent = "";
+  listChanged();
+}
+
+const plural = (n, one, few, many) => (n % 10 === 1 && n % 100 !== 11 ? one : n % 10 >= 2 && n % 10 <= 4 && (n % 100 < 10 || n % 100 >= 20) ? few : many);
+
+/** Номера строк, счётчик записей и высота поля под текст (прокручивается вся панель). */
+function listChanged() {
+  const ta = $("#list-editor");
+  const lines = ta.value.split("\n");
+  if (lines.length > 1 && lines[lines.length - 1] === "") lines.pop();
+  $("#list-gutter").textContent = lines.map((_, i) => i + 1).join("\n");
+  const n = lines.filter((l) => l.trim() && !l.trim().startsWith("#")).length;
+  const ip = currentList.startsWith("ipset");
+  $("#list-count").textContent = n ? `${n} ${ip ? plural(n, "адрес", "адреса", "адресов") : plural(n, "домен", "домена", "доменов")}` : "пусто";
+  ta.style.height = "auto";
+  ta.style.height = `${ta.scrollHeight}px`;
+}
+
+async function saveList() {
+  await call("set_list", { name: currentList, content: $("#list-editor").value });
+  await loadList();
+  $("#list-saved").textContent = "Сохранено ✓";
 }
 
 /* ───────────── журнал ───────────── */
 
 function logLine(line) {
-  const span = document.createElement("span");
-  if (line.includes("★")) span.className = "star";
-  else if (line.includes("✓")) span.className = "ok";
-  else if (/✗|Ошибка/.test(line)) span.className = "bad";
-  else if (/▶|■|Без обхода|Сторож/.test(line)) span.className = "hl";
-  span.textContent = line + "\n";
+  const m = /^(\d\d:\d\d:\d\d) ?(.*)$/s.exec(line);
+  let [time, text] = m ? [m[1], m[2]] : ["", line];
+  // строки движка бэкенд помечает префиксом "» " — их можно скрыть фильтром
+  const engine = text.startsWith("» ");
+  if (engine) text = text.slice(2);
+  const row = document.createElement("div");
+  let cls = "";
+  if (text.includes("★")) cls = "star";
+  else if (text.includes("✓")) cls = "ok";
+  else if (/✗|Ошибка|ошибка|не удалось/.test(text)) cls = "bad";
+  else if (/▶|■|Без обхода|Сторож|ИИ/.test(text)) cls = "hl";
+  if (engine) cls += " engine";
+  row.className = "ln " + cls;
+  row.innerHTML = `<time>${time}</time><i></i><span></span>`;
+  row.lastChild.textContent = text;
   const log = $("#log");
   const atBottom = log.scrollTop + log.clientHeight >= log.scrollHeight - 30;
-  log.appendChild(span);
+  log.appendChild(row);
   while (log.childNodes.length > 800) log.removeChild(log.firstChild);
   if (atBottom) log.scrollTop = log.scrollHeight;
 }
@@ -274,14 +337,17 @@ function renderSettings() {
   $$("[data-key]").forEach((el) => {
     const v = settings[el.dataset.key];
     if (el.type === "checkbox") el.checked = !!v;
+    else if (el.type === "time") el.value = v || "03:00";
     else $$("button", el).forEach((b) => b.classList.toggle("on", b.dataset.v === v));
   });
+  $("#sched-time-row").closest(".card").classList.toggle("sched-off", !settings.schedule);
 }
 
 async function saveSetting(key, value) {
   settings = { ...settings, [key]: value };
   renderSettings();
   if (key === "theme") applyTheme(value);
+  if (key.startsWith("schedule")) renderStatus();
   await call("set_settings", { settings });
 }
 
@@ -488,18 +554,35 @@ function bind() {
       loadList();
     }
   };
-  $("#btn-save-list").onclick = async () => {
-    await call("set_list", { name: currentList, content: $("#list-editor").value });
-    await loadList();
-    $("#list-saved").textContent = "Сохранено ✓";
+  $("#btn-save-list").onclick = () => saveList().catch(() => {});
+  $("#list-editor").oninput = () => {
+    $("#list-saved").textContent = "";
+    listChanged();
+  };
+  $("#list-editor").onkeydown = (e) => {
+    if (e.ctrlKey && e.code === "KeyS") {
+      e.preventDefault();
+      saveList().catch(() => {});
+    }
   };
 
+  $("#log-filter").onclick = (e) => {
+    const b = e.target.closest("button");
+    if (!b) return;
+    $$("#log-filter button").forEach((x) => x.classList.toggle("on", x === b));
+    $("#log").dataset.f = b.dataset.f;
+    $("#log").scrollTop = $("#log").scrollHeight;
+  };
   $("#btn-copy-log").onclick = async () => {
-    await navigator.clipboard.writeText($("#log").innerText);
+    const text = $$("#log .ln").map((r) => `${r.firstChild.textContent} ${r.lastChild.textContent}`).join("\n");
+    await navigator.clipboard.writeText(text);
     toast("Журнал скопирован");
   };
 
   $$(".toggle input[data-key]").forEach((el) => (el.onchange = () => saveSetting(el.dataset.key, el.checked).catch(renderSettings)));
+  $$("input[type=time][data-key]").forEach((el) => {
+    el.onchange = () => el.value && saveSetting(el.dataset.key, el.value).catch(renderSettings);
+  });
   $$(".seg[data-key]").forEach((seg) => {
     seg.onclick = (e) => {
       const b = e.target.closest("button");
@@ -567,13 +650,14 @@ init();
 
 /* ════════════════════════════════════════════════════════════════
    Мок для просмотра дизайна в браузере (без Tauri)
-   #dark | #light, &page=strategies, &onb=0..3, &run
+   #dark | #light, &page=strategies, &bottom, &onb=0..3, &run
    ════════════════════════════════════════════════════════════════ */
 function previewFromHash() {
   const h = new URLSearchParams(location.hash.slice(1));
   if (h.has("dark")) applyTheme("dark");
   if (h.has("light")) applyTheme("light");
   if (h.get("page")) go(h.get("page"));
+  if (h.has("bottom")) setTimeout(() => ($(".page.active").scrollTop = 1e5), 400);
   if (h.has("onb")) {
     onbShow();
     const n = +h.get("onb");
@@ -587,13 +671,16 @@ function mockApi() {
   const handlers = {};
   const emit = (ev, p) => (handlers[ev] || []).forEach((f) => f(p));
   let st = { mode: "off", services: [], conflicts: [], strategy: null, progress: null, message: null, checked_at: null };
-  let set = { enable_on_launch: true, autostart: false, watchdog: true, watchdog_interval: 180, fast_select: true, close_to_tray: true, game_filter: "off", ipset: "none", theme: "system", onboarded: true, ai_unlock: true, ai_provider: "auto" };
+  let set = { enable_on_launch: true, autostart: false, watchdog: true, watchdog_interval: 180, fast_select: true, close_to_tray: true, game_filter: "off", ipset: "none", theme: "system", onboarded: true, ai_unlock: true, ai_provider: "auto", schedule: true, schedule_time: "03:00", schedule_update: false };
   const strategies = [
     ["z2-seqovl-google", "Seqovl · Google", "z2", "multisplit с перекрытием seq фейковым ClientHello google.com"],
     ["z2-fake-disorder-md5", "Fake + disorder · MD5", "z2", "фейк с подменой SNI и MD5-подписью, затем сегменты в обратном порядке"],
     ["fs:general", "Flowseal · General", "z1", "winws: fake, multisplit"],
     ["fs:general (ALT)", "Flowseal · ALT", "z1", "winws: fake, fakedsplit"],
+    ["z2-multidisorder", "Multidisorder · SNI", "z2", "сегменты в обратном порядке с разрезом на имени сайта"],
+    ["fs:general (FAKE TLS AUTO)", "Flowseal · FAKE TLS AUTO", "z1", "winws: fake с автоматическим TLS, multisplit"],
   ];
+  const MOCK_SCORES = [[11, 2300], [8, 2700], [5, 3100], null, [11, 2900], [3, 4200]];
   const svc = (ok) => Object.keys(SERVICES).map((id, i) => ({ id, name: SERVICES[id].name, ok: ok ? 2 : i === 2 ? 2 : 0, total: 2, ms: 120 + i * 40 }));
   const push = (patch) => {
     st = { ...st, ...patch };
@@ -617,8 +704,17 @@ function mockApi() {
     get_status: () => st,
     get_settings: () => set,
     set_settings: ({ settings }) => void (set = settings),
-    get_logs: () => ["12:00:00 Без обхода доступно 2/11"],
-    get_strategies: () => strategies.map(([id, name, engine, hint], i) => ({ id, name, engine, hint, active: st.strategy?.id === id, score: i < 3 ? { passed: 11 - i * 3, total: 11, latency_ms: 2300 + i * 400 } : null })),
+    get_logs: () => [
+      "12:00:00 ▶ Prosvet 0.2.0, движки zapret2 v1.0.5.2 · Flowseal 1.10.3",
+      "12:00:01 Без обхода доступно 2/11",
+      "12:00:02 » capture is started.",
+      "12:00:04 ✗ Fake + disorder · MD5 — 8/11, YouTube: таймаут после 16 КБ",
+      "12:00:06 ✓ Seqovl · Google — 11/11 за 2.3 с",
+      "12:00:06 ★ выбрана «Seqovl · Google» (11/11)",
+      "12:00:07 ИИ: умный DNS Comss, Gemini и ChatGPT доступны",
+      "12:03:07 Сторож: всё работает 11/11",
+    ],
+    get_strategies: () => strategies.map(([id, name, engine, hint], i) => ({ id, name, engine, hint, active: st.strategy?.id === id, score: MOCK_SCORES[i] && { passed: MOCK_SCORES[i][0], total: 11, latency_ms: MOCK_SCORES[i][1] } })),
     get_info: () => ({ version: "0.1.0", engines: { flowseal: "1.10.3", zapret2: "v1.0.5.2" }, data_dir: "C:\\Users\\you\\AppData\\Local\\Prosvet", defender_ok: true }),
     enable: () => select(),
     auto_select: () => select(),

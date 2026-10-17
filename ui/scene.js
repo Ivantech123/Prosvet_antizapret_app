@@ -39,6 +39,9 @@ class Scene {
     // текущие параметры стартуют с «темноты», чтобы при запуске свет включался
     this.cur = { i: 0, slit: 0, spread: 0.2, sweep: 0, speed: 0.2, c: [150, 162, 190] };
     this.flash = 0;
+    // 0 — главная, 1 — внутренняя страница: щель гаснет, остаётся только тёплая подсветка
+    this.inner = 0;
+    this.innerTarget = 0;
     this.t = 0;
     this.last = performance.now();
     this.particles = [];
@@ -60,6 +63,10 @@ class Scene {
     // включение — щель вспыхивает, как лампа
     if (mode === "on" && this.mode !== "on") this.flash = 1;
     this.mode = mode;
+  }
+
+  setInner(on) {
+    this.innerTarget = on ? 1 : 0;
   }
 
   resize() {
@@ -114,11 +121,12 @@ class Scene {
     for (const key of ["i", "slit", "spread", "sweep", "speed"]) P[key] += (target[key] - P[key]) * k;
     P.c = P.c.map((v, j) => v + (target.c[j] - v) * k);
     this.flash = Math.max(0, this.flash - dt * 1.4);
+    this.inner += (this.innerTarget - this.inner) * Math.min(1, dt * 4);
 
     // мерцание при включении + лёгкое «дыхание» света
     const flicker = this.flash > 0.55 ? (Math.random() < 0.5 ? 0.35 : 1.25) : 1;
     const breathe = 1 + Math.sin(this.t * 0.9) * 0.04;
-    const I = P.i * flicker * breathe;
+    const I = P.i * flicker * breathe * (1 - this.inner * 0.35);
     this.angle = Math.sin(this.t * 1.3) * P.sweep * 0.5;
 
     const { ctx, w, h } = this;
@@ -201,7 +209,9 @@ class Scene {
     ctx.restore();
 
     // ── сама щель ──
-    const slitA = Math.min(1, P.slit * flicker);
+    const fade = 1 - this.inner;
+    if (fade < 0.01) return;
+    const slitA = Math.min(1, P.slit * flicker) * fade;
     const sh = 66;
     ctx.save();
     ctx.translate(cx, top);
@@ -218,7 +228,7 @@ class Scene {
     if (!dark || slitA < 0.4) {
       // в выключенном виде щель — тёмная прорезь
       ctx.shadowBlur = 0;
-      ctx.fillStyle = dark ? `rgba(120,128,150,${0.35 * (1 - slitA)})` : `rgba(40,40,50,${0.5 * (1 - slitA)})`;
+      ctx.fillStyle = dark ? `rgba(120,128,150,${0.35 * (fade - slitA)})` : `rgba(40,40,50,${0.5 * (fade - slitA)})`;
       roundRect(ctx, -2.5, -sh, 5, sh + 4, 2.5);
       ctx.fill();
     }

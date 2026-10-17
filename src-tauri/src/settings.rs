@@ -66,6 +66,12 @@ pub struct Settings {
     pub ai_unlock: bool,
     /// auto | comss | geohide
     pub ai_provider: String,
+    /// Подбирать стратегию заново каждый день в `schedule_time`.
+    pub schedule: bool,
+    /// Время подбора по расписанию, «ЧЧ:ММ» по местному времени.
+    pub schedule_time: String,
+    /// Перед подбором по расписанию обновлять движки и стратегии.
+    pub schedule_update: bool,
 }
 
 impl Default for Settings {
@@ -84,6 +90,9 @@ impl Default for Settings {
             onboarded: false,
             ai_unlock: false,
             ai_provider: "auto".into(),
+            schedule: false,
+            schedule_time: "03:00".into(),
+            schedule_update: false,
         }
     }
 }
@@ -101,6 +110,8 @@ pub struct Score {
 #[serde(default)]
 pub struct State {
     pub scores: HashMap<String, Score>,
+    /// День (номер от 1970-01-01, местное время) последнего подбора по расписанию.
+    pub last_scheduled: Option<i64>,
 }
 
 pub fn load<T: DeserializeOwned + Default>(path: &Path) -> T {

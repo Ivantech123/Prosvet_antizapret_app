@@ -12,7 +12,7 @@
 
   <header class="titlebar" data-tauri-drag-region>
     <div class="brand" data-tauri-drag-region>
-      <span class="brand-mark" data-tauri-drag-region></span>
+      <svg class="mark brand-mark" viewBox="0 0 20 24" aria-hidden="true"><defs><linearGradient id="beamg" x1="0" y1="0" x2="0" y2="1"><stop offset="0" style="stop-color:var(--gold);stop-opacity:.85"/><stop offset="1" style="stop-color:var(--gold);stop-opacity:0"/></linearGradient></defs><path d="M8.6 9h2.8L18 24H2z" fill="url(#beamg)"/><rect x="8.4" y="0" width="3.2" height="11" rx="1.6" style="fill:var(--word-top)"/></svg>
       <span class="brand-name" data-tauri-drag-region>Prosvet</span>
     </div>
     <nav class="tabs" id="tabs">
@@ -74,6 +74,7 @@
         <div>
           <h2>Стратегии</h2>
           <p class="sub">Prosvet сам выбирает лучшую. Здесь — результаты проверок и ручной выбор.</p>
+          <div class="stats" id="strat-stats"></div>
         </div>
         <button class="btn primary" id="btn-auto">
           <svg viewBox="0 0 24 24"><path d="M12 3l2.4 5 5.6.8-4 3.9.9 5.5L12 15.6 7.1 18.2 8 12.7 4 8.8 9.6 8z" /></svg>Автоподбор
@@ -102,12 +103,16 @@
         <button data-list="ipset-exclude-user.txt">Исключить IP</button>
       </div>
       <div class="glass editor">
-        <p class="hint" id="list-help"></p>
-        <textarea id="list-editor" spellcheck="false"></textarea>
-      </div>
-      <div class="row end">
-        <span class="sub" id="list-saved"></span>
-        <button class="btn primary" id="btn-save-list">Сохранить</button>
+        <div class="editor-body">
+          <div class="gutter" id="list-gutter" aria-hidden="true"></div>
+          <textarea id="list-editor" spellcheck="false"></textarea>
+        </div>
+        <div class="editor-foot">
+          <span class="hint" id="list-help"></span>
+          <span class="count" id="list-count"></span>
+          <span class="saved" id="list-saved"></span>
+          <button class="btn primary small" id="btn-save-list">Сохранить<kbd>Ctrl S</kbd></button>
+        </div>
       </div>
     </section>
 
@@ -118,9 +123,16 @@
           <h2>Журнал</h2>
           <p class="sub">Что делает Prosvet и что отвечает движок.</p>
         </div>
-        <button class="btn" id="btn-copy-log">Скопировать</button>
+        <button class="btn" id="btn-copy-log">
+          <svg viewBox="0 0 24 24"><rect x="8" y="8" width="12" height="12" rx="3" /><path d="M16 8V6a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h2" /></svg>Скопировать
+        </button>
       </div>
-      <pre class="glass log" id="log"></pre>
+      <div class="seg" id="log-filter">
+        <button data-f="all" class="on">Всё</button>
+        <button data-f="app">События</button>
+        <button data-f="bad">Ошибки</button>
+      </div>
+      <div class="glass log" id="log" data-f="all"></div>
     </section>
 
     <!-- ───────────── Настройки ───────────── -->
@@ -128,7 +140,7 @@
       <div class="page-head"><div><h2>Настройки</h2></div></div>
 
       <div class="glass card">
-        <h3>Работа</h3>
+        <h3><span class="h3-ic"><svg viewBox="0 0 24 24"><path d="M12 3.5v8" /><path d="M6.6 7.2a7.5 7.5 0 1 0 10.8 0" /></svg></span>Работа</h3>
         <label class="toggle"><span><b>Включать при запуске</b><small>Обход стартует, как только открылось приложение</small></span><input type="checkbox" data-key="enable_on_launch" /><i></i></label>
         <label class="toggle"><span><b>Запускать вместе с Windows</b><small>Тихо, в трее, без запроса прав</small></span><input type="checkbox" data-key="autostart" /><i></i></label>
         <label class="toggle"><span><b>Сторож</b><small>Сам меняет стратегию, если провайдер что-то поменял</small></span><input type="checkbox" data-key="watchdog" /><i></i></label>
@@ -137,7 +149,17 @@
       </div>
 
       <div class="glass card">
-        <h3>Фильтры</h3>
+        <h3><span class="h3-ic"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.5" /><path d="M12 7.5V12l3 2" /></svg></span>Расписание</h3>
+        <label class="toggle"><span><b>Подбирать стратегию каждый день</b><small>Проверит все стратегии и переключится, только если найдёт лучше. Обход на пару минут прервётся — поэтому лучше ночью</small></span><input type="checkbox" data-key="schedule" /><i></i></label>
+        <div class="field sched" id="sched-time-row">
+          <span><b>Время</b><small>Если компьютер спал — подбор пройдёт после пробуждения, в течение 6 часов</small></span>
+          <input type="time" class="time" data-key="schedule_time" required />
+        </div>
+        <label class="toggle sched"><span><b>Заодно обновлять движки</b><small>Свежие zapret2 и стратегии Flowseal перед подбором</small></span><input type="checkbox" data-key="schedule_update" /><i></i></label>
+      </div>
+
+      <div class="glass card">
+        <h3><span class="h3-ic"><svg viewBox="0 0 24 24"><path d="M4 6h16M7 12h10M10 18h4" /></svg></span>Фильтры</h3>
         <div class="field">
           <span><b>Игровой фильтр</b><small>Игры на нестандартных портах · стратегии Flowseal</small></span>
           <div class="seg" data-key="game_filter">
@@ -153,7 +175,7 @@
       </div>
 
       <div class="glass card">
-        <h3>ИИ-сервисы</h3>
+        <h3><span class="h3-ic"><svg viewBox="0 0 24 24"><path d="M12 3l2 5.5L19.5 10.5 14 12.5 12 18l-2-5.5L4.5 10.5 10 8.5z" /><path d="M19 16l.8 2.2L22 19l-2.2.8L19 22l-.8-2.2L16 19l2.2-.8z" /></svg></span>ИИ-сервисы</h3>
         <label class="toggle"><span><b>Разблокировать Gemini, ChatGPT, Claude</b><small>А также AI Studio, NotebookLM, Grok и Copilot. Эти сервисы сами не пускают пользователей из России — здесь нужен не обход DPI, а зарубежный адрес</small></span><input type="checkbox" data-key="ai_unlock" /><i></i></label>
         <div class="field">
           <span><b>Умный DNS</b><small>Только эти домены идут через зарубежный прокси. Переписка зашифрована — прокси видит лишь имя сайта</small></span>
@@ -164,7 +186,7 @@
       </div>
 
       <div class="glass card">
-        <h3>Оформление</h3>
+        <h3><span class="h3-ic"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="8" /><path d="M12 4a8 8 0 0 0 0 16z" fill="currentColor" /></svg></span>Оформление</h3>
         <div class="field">
           <span><b>Тема</b><small>По умолчанию — как в Windows</small></span>
           <div class="seg" data-key="theme">
@@ -174,7 +196,7 @@
       </div>
 
       <div class="glass card">
-        <h3>Движки</h3>
+        <h3><span class="h3-ic"><svg viewBox="0 0 24 24"><path d="M12 3l8 4.5v9L12 21l-8-4.5v-9z" /><path d="M12 12l8-4.5M12 12v9M12 12L4 7.5" /></svg></span>Движки</h3>
         <div class="field">
           <span><b>Версии</b><small id="engine-versions">—</small></span>
           <div class="row">
@@ -193,7 +215,7 @@
       </div>
 
       <div class="glass card about">
-        <div class="about-mark"></div>
+        <div class="about-mark"><svg class="mark" viewBox="0 0 20 24" aria-hidden="true"><defs><linearGradient id="beamg2" x1="0" y1="0" x2="0" y2="1"><stop offset="0" style="stop-color:var(--gold);stop-opacity:.85"/><stop offset="1" style="stop-color:var(--gold);stop-opacity:0"/></linearGradient></defs><path d="M8.6 9h2.8L18 24H2z" fill="url(#beamg2)"/><rect x="8.4" y="0" width="3.2" height="11" rx="1.6" style="fill:var(--word-top)"/></svg></div>
         <div>
           <b>Prosvet <span id="app-version"></span></b>
           <p class="sub">Открытая оболочка над

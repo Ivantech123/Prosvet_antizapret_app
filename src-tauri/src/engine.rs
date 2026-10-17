@@ -182,7 +182,8 @@ fn pipe(r: impl Read + Send + 'static, log: Log) {
         for line in reader.split(b'\n').map_while(Result::ok) {
             let s = String::from_utf8_lossy(&line).trim_end().to_string();
             if !s.is_empty() && !is_noise(&s) {
-                log.push(s);
+                // «»» — строка от движка; интерфейс по ней прячет их фильтром
+                log.push(format!("» {s}"));
             }
         }
     });

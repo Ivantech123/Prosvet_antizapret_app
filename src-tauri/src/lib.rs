@@ -2,6 +2,7 @@ mod aidns;
 mod controller;
 mod engine;
 mod paths;
+mod schedule;
 mod settings;
 mod strategy;
 mod system;
@@ -260,6 +261,7 @@ pub fn run() {
                 tauri::async_runtime::spawn(async move { c3.apply_ai().await });
             }
             c.spawn_watchdog();
+            c.spawn_scheduler();
             Ok(())
         })
         .on_window_event(|window, event| {

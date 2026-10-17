@@ -12,6 +12,7 @@ use tauri::{AppHandle, Emitter};
 use crate::aidns::AiDns;
 use crate::engine::{Engine, Log};
 use crate::paths::{Paths, IPSET_NONE};
+use crate::schedule;
 use crate::settings::{self, IpsetMode, Score, Settings, State};
 use crate::strategy::{self, EngineKind, Strategy};
 use crate::system::{self, Conflict};
@@ -286,9 +287,15 @@ impl Controller {
     }
 
     async fn auto_select_locked(self: &Arc<Self>) -> Result<()> {
+        let fast = self.settings().fast_select;
+        self.select_best(fast).await
+    }
+
+    /// Перебор стратегий. `fast` — остановиться на первой, прошедшей все проверки;
+    /// иначе проверить все и взять лучшую (текущая идёт первой и остаётся при равенстве).
+    async fn select_best(self: &Arc<Self>, fast: bool) -> Result<()> {
         self.cancel.store(false, Ordering::SeqCst);
         system::ensure_tcp_timestamps();
-        let fast = self.settings().fast_select;
         let list = self.candidates();
         let total = list.len() as u32;
 
@@ -484,6 +491,9 @@ impl Controller {
         }
         let restart = new.game_filter != old.game_filter || new.ipset != old.ipset;
         let ai_changed = new.ai_unlock != old.ai_unlock || new.ai_provider != old.ai_provider;
+        if new.schedule && (!old.schedule || new.schedule_time != old.schedule_time) {
+            self.skip_current_schedule(&new);
+        }
         *self.settings.lock().unwrap() = new;
         self.save_settings();
         if ai_changed {
@@ -629,6 +639,75 @@ impl Controller {
             self.log.push("Сторож: подбираю новую стратегию");
             let _ = self.auto_select().await;
         }
+    }
+
+    // ------------------------------------------------------------ расписание
+
+    pub fn spawn_scheduler(self: &Arc<Self>) {
+        let me = self.clone();
+        tauri::async_runtime::spawn(async move {
+            loop {
+                tokio::time::sleep(Duration::from_secs(60)).await;
+                me.scheduler_tick().await;
+            }
+        });
+    }
+
+    /// Расписание только что включили или сдвинули на уже прошедшее время —
+    /// не запускать подбор немедленно, первый раз будет в следующий срок.
+    fn skip_current_schedule(&self, set: &Settings) {
+        let Some(target) = schedule::parse_hm(&set.schedule_time) else { return };
+        let mut st = self.state.lock().unwrap();
+        if let Some(day) = schedule::due(schedule::local_now(), target, st.last_scheduled) {
+            st.last_scheduled = Some(day);
+            settings::save(&self.paths.state, &*st);
+        }
+    }
+
+    async fn scheduler_tick(self: &Arc<Self>) {
+        let set = self.settings();
+        if !set.schedule {
+            return;
+        }
+        let Some(target) = schedule::parse_hm(&set.schedule_time) else { return };
+        let last = self.state.lock().unwrap().last_scheduled;
+        let Some(day) = schedule::due(schedule::local_now(), target, last) else { return };
+        match self.status().mode {
+            // идёт подбор или обновление — попробуем через минуту
+            Mode::Starting | Mode::Testing | Mode::Updating => return,
+            Mode::On => {}
+            // обход выключен — на сегодня пропускаем, чтобы не включиться самому
+            _ => {
+                self.mark_scheduled(day);
+                return;
+            }
+        }
+        self.mark_scheduled(day);
+        self.log.push(format!("Расписание: подбор в {}", set.schedule_time));
+
+        if set.schedule_update {
+            if let Err(e) = self.update_engines().await {
+                self.log.push(format!("Расписание: обновить движки не удалось — {e}"));
+            }
+            if self.status().mode != Mode::On {
+                return;
+            }
+        }
+
+        let _g = self.op.lock().await;
+        // Нет сети вовсе — перебор ничего не даст, а стратегию может сменить зря.
+        let r = tester::run().await;
+        if r.passed == 0 {
+            self.log.push("Расписание: сеть недоступна, подбор отложен до завтра");
+            return;
+        }
+        let _ = self.select_best(false).await;
+    }
+
+    fn mark_scheduled(&self, day: i64) {
+        let mut st = self.state.lock().unwrap();
+        st.last_scheduled = Some(day);
+        settings::save(&self.paths.state, &*st);
     }
 
     pub fn shutdown(&self) {
