@@ -101,9 +101,6 @@ Prosvet — красивая оболочка на Rust над проверен�
 
 ## Сборка из исходников
 
-Проще всего — GitHub Actions: **Actions → Build → Run workflow** соберёт все версии,
-а тег `vX.Y.Z` ещё и выложит их в релиз.
-
 Локально на Windows нужны Rust (stable, MSVC), Node.js 18+, Windows 10/11.
 
 ```powershell
