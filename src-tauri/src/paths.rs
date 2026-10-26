@@ -4,7 +4,8 @@ use std::path::{Path, PathBuf};
 use anyhow::{Context, Result};
 
 /// Все рабочие пути приложения. Движки копируются из ресурсов в
-/// `%LOCALAPPDATA%\Prosvet`, чтобы их можно было обновлять без переустановки.
+/// `%LOCALAPPDATA%\Prosvet` (Linux: `~/.local/share/prosvet`), чтобы их можно было
+/// обновлять без переустановки.
 #[derive(Clone, Debug)]
 pub struct Paths {
     pub data: PathBuf,
@@ -14,6 +15,8 @@ pub struct Paths {
     pub lists: PathBuf,
     pub settings: PathBuf,
     pub state: PathBuf,
+    /// Скачанный установщик новой версии Prosvet.
+    pub update: PathBuf,
 }
 
 /// Пользовательские списки: создаются один раз и никогда не перезаписываются.
@@ -27,10 +30,17 @@ pub const IPSET_NONE: &str = "203.0.113.113/32\n";
 
 impl Paths {
     pub fn new() -> Result<Self> {
-        let base = std::env::var_os("LOCALAPPDATA")
+        #[cfg(windows)]
+        let data = std::env::var_os("LOCALAPPDATA")
             .map(PathBuf::from)
-            .context("LOCALAPPDATA не задан")?;
-        let data = base.join("Prosvet");
+            .context("LOCALAPPDATA не задан")?
+            .join("Prosvet");
+        #[cfg(unix)]
+        let data = std::env::var_os("XDG_DATA_HOME")
+            .map(PathBuf::from)
+            .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".local").join("share")))
+            .context("HOME не задан")?
+            .join("prosvet");
         let engine = data.join("engine");
         Ok(Self {
             z1: engine.join("z1"),
@@ -38,17 +48,27 @@ impl Paths {
             lists: data.join("lists"),
             settings: data.join("settings.json"),
             state: data.join("state.json"),
+            update: data.join("update"),
             engine,
             data,
         })
     }
 
     pub fn z1_exe(&self) -> PathBuf {
-        self.z1.join("winws.exe")
+        self.z1.join(if cfg!(windows) { "winws.exe" } else { "nfqws" })
     }
 
     pub fn z2_exe(&self) -> PathBuf {
-        self.z2.join("winws2.exe")
+        self.z2.join(if cfg!(windows) { "winws2.exe" } else { "nfqws2" })
+    }
+
+    /// Linux: ресурсы пакета могут прийти без бита исполнения.
+    pub fn make_executable(&self) {
+        #[cfg(unix)]
+        for exe in [self.z1_exe(), self.z2_exe()] {
+            use std::os::unix::fs::PermissionsExt;
+            let _ = fs::set_permissions(exe, fs::Permissions::from_mode(0o755));
+        }
     }
 
     pub fn version_file(&self) -> PathBuf {
@@ -70,6 +90,7 @@ impl Paths {
             fs::copy(resources.join("version.json"), self.version_file())?;
             self.install_lists(&resources.join("lists"))?;
         }
+        self.make_executable();
         self.ensure_user_lists()?;
         Ok(fresh)
     }
@@ -120,11 +141,12 @@ pub fn copy_dir(from: &Path, to: &Path) -> Result<()> {
     Ok(())
 }
 
-/// Путь для winws: Windows-путь с завершающим `\`.
+/// Путь к папке для аргументов движка, с разделителем на конце.
 pub fn dir_arg(p: &Path) -> String {
+    let sep = std::path::MAIN_SEPARATOR;
     let mut s = p.display().to_string();
-    if !s.ends_with('\\') {
-        s.push('\\');
+    if !s.ends_with(sep) {
+        s.push(sep);
     }
     s
 }

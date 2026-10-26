@@ -242,6 +242,21 @@ h3 { margin: 0 0 4px; font: 700 11px/1 var(--ui); text-transform: uppercase; let
 .banner { display: flex; align-items: center; gap: 14px; padding: 9px 9px 9px 16px; border-radius: 16px; animation: drop 0.5s cubic-bezier(.2,.8,.2,1); }
 .banner::before { content: ""; width: 8px; height: 8px; border-radius: 50%; background: var(--warn); box-shadow: 0 0 0 4px var(--warn-soft); flex: none; }
 .banner.bad::before { background: var(--bad); box-shadow: 0 0 0 4px var(--bad-soft); }
+.banner.gold::before { background: var(--gold); box-shadow: 0 0 0 4px var(--gold-soft); }
+.banner .btn + .btn { margin-left: -6px; }
+.banners.still .banner { animation: none; }
+.pause-opts { margin-top: 10px; }
+.sitecheck { border-radius: 18px; padding: 6px 6px 6px 14px; margin-bottom: 12px; }
+.site-row { display: flex; align-items: center; gap: 10px; }
+.site-row svg { width: 17px; height: 17px; flex: none; fill: none; stroke: var(--muted); stroke-width: 2; stroke-linecap: round; }
+.site-row input { flex: 1; min-width: 0; border: 0; outline: 0; background: transparent; color: var(--text); font: inherit; font-size: 14px; padding: 8px 0; }
+.site-row input::placeholder { color: var(--muted); }
+.site-result { display: flex; align-items: center; gap: 12px; padding: 10px 8px 6px 27px; border-top: 1px solid var(--line); margin-top: 6px; font-size: 13px; }
+.site-result .msg { flex: 1; }
+.site-result .msg span { color: var(--muted); }
+.site-result.ok b { color: var(--ok); }
+.site-result.bad b { color: var(--bad); }
+kbd { display: inline-block; padding: 0 5px; border: 1px solid var(--line-2); border-bottom-width: 2px; border-radius: 5px; font: inherit; font-size: 11px; line-height: 16px; }
 .banner-text { flex: 1; font-size: 13px; line-height: 1.4; }
 .banner-text b { font-weight: 800; }
 .banner-text span { color: var(--muted); }
@@ -372,7 +387,7 @@ body[data-mode="error"] .cta-ring { background: var(--bad); }
 .pips.none { opacity: 0.45; }
 
 /* ═════════ списки / журнал ═════════ */
-.editor { border-radius: 20px; overflow: hidden; display: flex; flex-direction: column; height: calc(100vh - 262px); min-height: 240px; transition: border-color 0.2s, box-shadow 0.2s; }
+.editor { border-radius: 20px; overflow: hidden; display: flex; flex-direction: column; height: calc(100vh - 326px); min-height: 240px; transition: border-color 0.2s, box-shadow 0.2s; }
 .editor:focus-within { border-color: color-mix(in srgb, var(--gold) 45%, transparent); box-shadow: inset 0 1px 0 var(--hi), 0 0 0 4px var(--gold-soft), var(--shadow); }
 .editor-body { flex: 1; min-height: 0; display: flex; overflow: auto; }
 .editor-body::-webkit-scrollbar, .log::-webkit-scrollbar { width: 10px; }

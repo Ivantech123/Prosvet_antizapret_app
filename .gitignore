@@ -6,3 +6,6 @@
 
 # РґРІРёР¶РєРё СЃРєР°С‡РёРІР°СЋС‚СЃСЏ СЃРєСЂРёРїС‚РѕРј: npm run engine
 /src-tauri/resources/engine
+
+# готовые сборки
+/dist

@@ -90,25 +90,39 @@ fn client() -> reqwest::Client {
         .expect("http client")
 }
 
+async fn fetch(c: &reqwest::Client, url: &str, min_bytes: usize) -> Result<(), String> {
+    let mut resp = c.get(url).send().await.map_err(short_err)?;
+    // Заморозка ТСПУ выглядит как таймаут посреди потока (ошибка из chunk()),
+    // а штатно закончившийся короткий ответ — это успех.
+    let mut got = 0usize;
+    while got < min_bytes {
+        match resp.chunk().await.map_err(|e| format!("{} после {} КБ", short_err(e), got / 1024))? {
+            Some(b) => got += b.len(),
+            None => break,
+        }
+    }
+    Ok(())
+}
+
 async fn check(c: &reqwest::Client, t: Target) -> TargetResult {
     let start = Instant::now();
-    let res: Result<(), String> = async {
-        let mut resp = c.get(t.url).send().await.map_err(short_err)?;
-        // Заморозка ТСПУ выглядит как таймаут посреди потока (ошибка из chunk()),
-        // а штатно закончившийся короткий ответ — это успех.
-        let mut got = 0usize;
-        while got < t.min_bytes {
-            match resp.chunk().await.map_err(|e| format!("{} после {} КБ", short_err(e), got / 1024))? {
-                Some(b) => got += b.len(),
-                None => break,
-            }
-        }
-        Ok(())
-    }
-    .await;
+    let res = fetch(c, t.url, t.min_bytes).await;
     TargetResult {
         service: t.service.into(),
         url: t.url.into(),
+        ok: res.is_ok(),
+        ms: start.elapsed().as_millis() as u32,
+        error: res.err(),
+    }
+}
+
+/// Проверка произвольного сайта: дочитываем до 64 КБ, чтобы поймать «заморозку».
+pub async fn check_url(url: &str) -> TargetResult {
+    let start = Instant::now();
+    let res = fetch(&client(), url, 64 * 1024).await;
+    TargetResult {
+        service: "custom".into(),
+        url: url.into(),
         ok: res.is_ok(),
         ms: start.elapsed().as_millis() as u32,
         error: res.err(),

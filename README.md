@@ -5,7 +5,7 @@
 # Prosvet
 
 **Немного света сквозь блокировки.**
-Открытое приложение для Windows, которое возвращает YouTube, Discord и другие сервисы —
+Открытое приложение для Windows и Linux, которое возвращает YouTube, Discord и другие сервисы —
 без VPN, без серверов и без подписок.
 
 <img src="docs/home.png" width="760" alt="Главный экран Prosvet" />
@@ -28,10 +28,22 @@ Prosvet — красивая оболочка на Rust над проверен�
 - **Честная проверка.** Тестер не просто ждёт ответа, а докачивает данные —
   так ловится характерная для ТСПУ «заморозка» соединения на ~16 КБ.
 - **Всё локально.** Трафик никуда не уходит: пакеты хитро нарезаются прямо на вашем компьютере.
-- **Не мешает.** Живёт в трее, стартует вместе с Windows без запросов UAC,
-  движок завершается вместе с приложением (Job Object) — никаких «висящих» winws.
+- **Не мешает.** Живёт в трее, стартует вместе с системой (в Windows — без запросов UAC),
+  движок завершается вместе с приложением — никаких «висящих» winws и nfqws.
+- **Проверит любой сайт.** Введите адрес — Prosvet скажет, открывается ли он (с той же докачкой
+  против «заморозки»), и одной кнопкой добавит домен в ваш список обхода.
+- **Пауза.** Выключить обход на 15 минут, час или три — для банков и сайтов, которым он мешает.
+  Потом включится сам. Есть и в трее.
+- **Сообщает о важном.** Уведомления, когда окно свёрнуто: сторож сменил стратегию, ошибка,
+  вышла новая версия, закончилась пауза.
+- **Отчёт для баг-репорта.** Кнопка «Отчёт» в журнале собирает zip с журналом, настройками и версиями —
+  приложите его к issue.
 - **Видит конфликты.** Находит запущенные службы zapret/GoodbyeDPI и предлагает их остановить.
 - **Обновляется.** Свежие версии zapret2 и стратегий Flowseal — одной кнопкой, свои списки не трогаются.
+  Сам Prosvet тоже: находит новый релиз, скачивает установщик, сверяет SHA-256 и перезапускается
+  уже обновлённым — по нажатию, без сайтов и ручных загрузок.
+- **Удобно.** Горячие клавиши (`Ctrl+Enter` — вкл/выкл, `F5` — проверить доступ, `Ctrl+1…5` — вкладки),
+  в трее — «Проверить доступ» и «Установить обновление».
 - **Открывает ИИ.** Gemini, AI Studio, NotebookLM, ChatGPT, Claude, Grok и Copilot сами не пускают
   пользователей из России — это геоблок, а не РКН, и zapret его не снимает. Prosvet включает «умный DNS»
   (Comss / GeoHide, без Xbox DNS): только эти домены идут через зарубежный прозрачный прокси,
@@ -44,17 +56,55 @@ Prosvet — красивая оболочка на Rust над проверен�
 <p align="center">
   <img src="docs/strategies.png" width="760" alt="Стратегии" />
 </p>
+<p align="center">
+  <img src="docs/sitecheck.png" width="49%" alt="Проверка сайта" />
+  <img src="docs/update.png" width="49%" alt="Новая версия Prosvet" />
+</p>
+
+## Что нового в 0.3.1
+
+- Самообновление Prosvet из релизов GitHub с проверкой SHA-256 (установщик в Windows, AppImage в Linux)
+- **Версия для Linux** (x86_64): .deb, .rpm, AppImage — nfqws/nfqws2 + nftables
+- Проверка любого сайта и добавление в список, пауза обхода, уведомления, отчёт диагностики
+- Горячие клавиши, новые пункты в трее
+- Исправлено: «Выключить» во время подбора больше не включает обход обратно
+- Движки: Flowseal 1.10.4, zapret2 v1.0.6, zapret v72.13 (Linux)
 
 ## Установка
 
-Скачайте `Prosvet_x64-setup.exe` из [релизов](../../releases) и запустите.
+Всё лежит в [релизах](../../releases):
+
+| Система | Файл |
+|---|---|
+| Windows 10/11 x64 | `Prosvet_X.Y.Z_x64-setup.exe` — установщик (обновляется сам) |
+| | `Prosvet_X.Y.Z_x64_en-US.msi` — для развёртывания через групповые политики |
+| | `Prosvet_X.Y.Z_x64-portable.zip` — без установки: распакуйте и запустите `Prosvet.exe` |
+| Linux x86_64 | `.AppImage` — любой дистрибутив, обновляется сам |
+| | `.deb` — Debian, Ubuntu, Mint · `.rpm` — Fedora, openSUSE |
+
+Целостность файлов — в `SHA256SUMS.txt` рядом.
 
 > Microsoft Defender считает движок winws «HackTool» — это ложное срабатывание, так помечают
 > все инструменты обхода DPI. Prosvet при первом запуске предложит добавить исключение.
 
+## Linux
+
+Под капотом — те же движки в Linux-сборке: `nfqws2` (zapret2) и `nfqws` (zapret) для стратегий Flowseal.
+Вместо WinDivert пакеты движку отдают правила **nftables** (таблица `inet prosvet`).
+
+- Нужны `nftables` и `polkit` (pkexec) — пакеты .deb/.rpm ставят их сами.
+- При включении обхода система один раз спросит пароль: Prosvet запускает root-помощника
+  (`prosvet --helper`), который держит движок и правила. Закрылся Prosvet — помощник убирает
+  правила и останавливает движок.
+- Данные: `~/.local/share/prosvet`, автозапуск: `~/.config/autostart/prosvet.desktop`.
+- Разблокировка ИИ-сервисов пока только в Windows.
+
 ## Сборка из исходников
 
-Нужны: Rust (stable, MSVC), Node.js 18+, Windows 10/11.
+Проще всего — GitHub Actions: **Actions → Build → Run workflow** соберёт все версии,
+а тег `vX.Y.Z` ещё и выложит их в релиз.
+
+Локально на Windows нужны Rust (stable, MSVC), Node.js 18+, Windows 10/11.
 
 ```powershell
 npm install
@@ -64,9 +114,19 @@ npm run build       # установщик: src-tauri/target/release/bundle/nsis
 
 Для разработки интерфейса Tauri не нужен: откройте `ui/index.html` через любой локальный
 сервер — подключится мок бэкенда. Состояния переключаются через адрес:
-`index.html#dark&run`, `#light&page=strategies`, `#dark&page=settings&bottom`, `#dark&onb=0`.
+`index.html#dark&run`, `#light&page=strategies`, `#dark&page=settings&bottom`, `#dark&onb=0`,
+`#dark&upd` — баннер новой версии, `#dark&site=rutracker.org` — проверка сайта.
 
-Тесты (включая прогон **всех** стратегий через `winws --dry-run`):
+Локально на Linux (Ubuntu 22.04+):
+
+```bash
+sudo apt install libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev libxdo-dev patchelf nftables
+npm install
+bash scripts/fetch-engine.sh          # nfqws/nfqws2 под эту архитектуру
+npx tauri build --bundles deb,rpm,appimage
+```
+
+Тесты (включая прогон **всех** стратегий через `--dry-run` движка):
 
 ```powershell
 cd src-tauri; cargo test
@@ -83,8 +143,10 @@ src-tauri/src/
   engine.rs            запуск winws/winws2 в Job Object, журнал
   tester.rs            проверка YouTube / Discord / Google / Cloudflare
   system.rs            конфликты, автозапуск, Defender, TCP timestamps
+  helper.rs            Linux: root-помощник через pkexec — nfqws + правила nftables
   aidns.rs             разблокировка ИИ: локальный DNS + NRPT + DoH к умным DNS
   updater.rs           обновление движков из релизов GitHub
+  appupdate.rs         самообновление Prosvet: релиз, загрузка, SHA-256, установка
 scripts/               загрузка движков, генерация иконок и картинок установщика
 ```
 
@@ -102,6 +164,21 @@ VPN-клиенты в TUN-режиме (sing-box, Throne, Happ…) перехв�
 
 Диагностика: `PROSVET_DOH_PROXY=http://user:pass@host:port` — пустить DoH через прокси,
 `PROSVET_AI_PORT=5454` — поднять сервер на другом порту и опрашивать его вручную.
+
+### Самообновление
+
+Репозиторий релизов — константа `REPO` в `src-tauri/src/appupdate.rs`
+(`Ivantech123/Prosvet_antizapret_app`). Prosvet берёт `releases/latest`, сравнивает тег (`v0.4.0`)
+с версией из `Cargo.toml` и ищет файл `*x64-setup.exe`.
+
+Установщик скачивается только с контрольной суммой: GitHub сам публикует SHA-256 загруженных файлов
+(поле `digest`), а для старых релизов можно положить рядом `<имя установщика>.sha256`.
+Без суммы обновление не ставится. Установка идёт в пассивном режиме NSIS (`/P`), после неё
+Prosvet запускается снова; при первом запуске новой версии показывается «Prosvet обновлён до …».
+
+Как выпустить версию: поднять `version` в `package.json`, `Cargo.toml` и `tauri.conf.json`,
+собрать `npm run build` и создать релиз с тегом `vX.Y.Z`, приложив установщик из
+`src-tauri/target/release/bundle/nsis/`.
 
 ## Благодарности
 

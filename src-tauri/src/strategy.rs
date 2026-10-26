@@ -41,6 +41,8 @@ impl Strategy {
         self.args
             .iter()
             .map(|a| {
+                // В шаблонах пути написаны по-windows (lua\\zapret-lib.lua)
+                let a = if cfg!(windows) { a.clone() } else { a.replace('\\', "/") };
                 a.replace("{Z1}", &z1)
                     .replace("{Z2}", &z2)
                     .replace("{LISTS}", &lists)
@@ -49,6 +51,33 @@ impl Strategy {
             })
             .collect()
     }
+}
+
+/// UDP-порты, которые на Windows ловят фильтры --wf-raw-part (голос Discord, STUN, QUIC).
+const RAW_PART_UDP: &str = "443,3478-3481,5349,19294-19344,50000-50100";
+
+/// Linux: аргументы WinDivert (`--wf-*`) движку не нужны — пакеты ему отдают
+/// правила nftables. Вынимаем из них порты: (аргументы, порты TCP, порты UDP).
+pub fn split_wf(args: &[String]) -> (Vec<String>, String, String) {
+    let (mut tcp, mut udp, mut raw) = (Vec::new(), Vec::new(), false);
+    let mut rest = Vec::new();
+    for a in args {
+        let Some(opt) = a.strip_prefix("--wf-") else {
+            rest.push(a.clone());
+            continue;
+        };
+        let (key, val) = opt.split_once('=').unwrap_or((opt, ""));
+        match key {
+            "tcp" | "tcp-out" => tcp.push(val.to_string()),
+            "udp" | "udp-out" => udp.push(val.to_string()),
+            "raw" | "raw-part" => raw = true,
+            _ => {}
+        }
+    }
+    if raw {
+        udp.push(RAW_PART_UDP.into());
+    }
+    (rest, tcp.join(","), udp.join(","))
 }
 
 /// Все стратегии в порядке перебора: сначала zapret2, затем Flowseal.
@@ -402,6 +431,18 @@ start "zapret: %~n0" /min "%BIN%winws.exe" --wf-tcp=80,443,%GameFilterTCP% ^
     }
 
     #[test]
+    fn splits_windivert_args() {
+        let a: Vec<String> = ["--wf-tcp=80,443,{GAME_TCP}", "--wf-udp=443,19294-19344", "--filter-tcp=443", "--wf-raw-part=@x.txt", "--new"]
+            .into_iter()
+            .map(String::from)
+            .collect();
+        let (rest, tcp, udp) = split_wf(&a);
+        assert_eq!(rest, vec!["--filter-tcp=443", "--new"]);
+        assert_eq!(tcp, "80,443,{GAME_TCP}");
+        assert_eq!(udp, format!("443,19294-19344,{RAW_PART_UDP}"));
+    }
+
+    #[test]
     fn orders_flowseal_naturally() {
         let mut v = vec!["general (ALT10)", "general (ALT2)", "general", "general (ALT)", "general (SIMPLE FAKE)"];
         v.sort_by_key(|s| natural_key(s));
@@ -413,8 +454,9 @@ start "zapret: %~n0" /min "%BIN%winws.exe" --wf-tcp=80,443,%GameFilterTCP% ^
     #[test]
     fn all_strategies_pass_dry_run() {
         let res = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("resources").join("engine");
-        if !res.join("z1").join("winws.exe").exists() {
-            eprintln!("нет движков, пропуск (scripts/fetch-engine.ps1)");
+        let probe = res.join("z1").join(if cfg!(windows) { "winws.exe" } else { "nfqws" });
+        if !probe.exists() {
+            eprintln!("нет движков, пропуск (scripts/fetch-engine.ps1 / fetch-engine.sh)");
             return;
         }
         let paths = Paths {
@@ -425,6 +467,7 @@ start "zapret: %~n0" /min "%BIN%winws.exe" --wf-tcp=80,443,%GameFilterTCP% ^
             lists: res.join("lists"),
             settings: res.join("_s.json"),
             state: res.join("_st.json"),
+            update: res.join("_update"),
         };
         for (n, name) in [("list-general-user.txt", "domain.example.abc"), ("list-exclude-user.txt", "domain.example.abc"), ("ipset-exclude-user.txt", "203.0.113.113/32")] {
             let p = paths.lists.join(n);
@@ -441,7 +484,15 @@ start "zapret: %~n0" /min "%BIN%winws.exe" --wf-tcp=80,443,%GameFilterTCP% ^
                     EngineKind::Z1 => paths.z1_exe(),
                     EngineKind::Z2 => paths.z2_exe(),
                 };
-                if let Err(e) = crate::engine::dry_run(&exe, &s.expand(&paths, game)) {
+                let args = s.expand(&paths, game);
+                // На Linux движку уходит то же, что от помощника: без --wf-*, с --qnum,
+                // а от root — ещё и со сбросом прав до владельца файлов (--uid).
+                #[cfg(unix)]
+                let args = {
+                    let owner = if unsafe { libc::geteuid() } == 0 { crate::helper::owner_of(&exe) } else { None };
+                    crate::helper::engine_args(&split_wf(&args).0, owner)
+                };
+                if let Err(e) = crate::engine::dry_run(&exe, &args) {
                     failed.push(format!("{} ({game:?}): {e}", s.id));
                 }
             }

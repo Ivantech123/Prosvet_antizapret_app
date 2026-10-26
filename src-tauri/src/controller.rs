@@ -7,9 +7,11 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use anyhow::{anyhow, bail, Result};
 use serde::Serialize;
-use tauri::{AppHandle, Emitter};
+use tauri::{AppHandle, Emitter, Manager};
+use tauri_plugin_notification::NotificationExt;
 
 use crate::aidns::AiDns;
+use crate::appupdate::{self, AppUpdate};
 use crate::engine::{Engine, Log};
 use crate::paths::{Paths, IPSET_NONE};
 use crate::schedule;
@@ -55,6 +57,12 @@ pub struct Status {
     pub conflicts: Vec<Conflict>,
     /// ИИ-сервисы: None — функция выключена, Some(ok) — результат проверки.
     pub ai: Option<AiState>,
+    /// Доступна новая версия Prosvet.
+    pub app_update: Option<AppUpdate>,
+    /// Приложение только что обновилось до этой версии (показать «что нового»).
+    pub updated_to: Option<String>,
+    /// Обход на паузе до этого момента (unix-время), потом включится сам.
+    pub paused_until: Option<u64>,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -82,6 +90,12 @@ pub struct Controller {
     status: Mutex<Status>,
     op: tokio::sync::Mutex<()>,
     cancel: AtomicBool,
+    /// Пользователь выключил обход, пока шла операция, — не включаться по её итогам.
+    disabled: AtomicBool,
+    /// Идёт загрузка и установка новой версии.
+    installing: AtomicBool,
+    /// Поколение паузы: новая пауза или ручное включение отменяют старый таймер.
+    pause_gen: AtomicU32,
     watchdog_fails: AtomicU32,
     ai: AiDns,
 }
@@ -106,17 +120,31 @@ impl Controller {
         let log = Log::new(Some(&paths.data.join("prosvet.log")), move |line| {
             let _ = emitter.emit("log", line);
         });
-        let settings: Settings = settings::load(&paths.settings);
+        let mut settings: Settings = settings::load(&paths.settings);
         let state: State = settings::load(&paths.state);
+        // Остатки прошлого самообновления: установщик уже отработал.
+        let _ = fs::remove_dir_all(&paths.update);
+        let version = env!("CARGO_PKG_VERSION");
+        let updated_to = (!settings.last_version.is_empty() && settings.last_version != version).then(|| version.to_string());
+        if settings.last_version != version {
+            settings.last_version = version.to_string();
+            settings::save(&paths.settings, &settings);
+        }
+        if let Some(v) = &updated_to {
+            log.push(format!("Prosvet обновлён до {v}"));
+        }
         Arc::new(Self {
             app,
             log,
             settings: Mutex::new(settings),
             state: Mutex::new(state),
             engine: Mutex::new(Engine::new()),
-            status: Mutex::new(Status::default()),
+            status: Mutex::new(Status { updated_to, ..Status::default() }),
             op: tokio::sync::Mutex::new(()),
             cancel: AtomicBool::new(false),
+            disabled: AtomicBool::new(false),
+            installing: AtomicBool::new(false),
+            pause_gen: AtomicU32::new(0),
             watchdog_fails: AtomicU32::new(0),
             ai: AiDns::new(),
             paths,
@@ -238,6 +266,8 @@ impl Controller {
 
     /// Главная кнопка. Пробует сохранённую стратегию, при неудаче — подбирает новую.
     pub async fn enable(self: &Arc<Self>) -> Result<()> {
+        self.disabled.store(false, Ordering::SeqCst);
+        self.clear_pause();
         let _g = self.op.lock().await;
         system::ensure_tcp_timestamps();
         let saved = self.settings().strategy.and_then(|id| self.find(&id));
@@ -267,6 +297,8 @@ impl Controller {
     }
 
     pub fn disable(&self) {
+        self.clear_pause();
+        self.disabled.store(true, Ordering::SeqCst);
         self.cancel.store(true, Ordering::SeqCst);
         self.stop_engine();
         self.log.push("■ обход выключен");
@@ -281,7 +313,53 @@ impl Controller {
         self.cancel.store(true, Ordering::SeqCst);
     }
 
+    /// Выключает обход на `minutes` минут; потом он включится сам.
+    pub fn pause(self: &Arc<Self>, minutes: u64) {
+        self.disable();
+        let until = now() + minutes * 60;
+        let gen = self.pause_gen.fetch_add(1, Ordering::SeqCst) + 1;
+        self.log.push(format!("Пауза на {minutes} мин"));
+        self.update(|st| st.paused_until = Some(until));
+        let me = self.clone();
+        tauri::async_runtime::spawn(async move {
+            // Сверяемся с часами, а не спим одним куском: компьютер мог уснуть.
+            while now() < until {
+                tokio::time::sleep(Duration::from_secs(15)).await;
+                if me.pause_gen.load(Ordering::SeqCst) != gen {
+                    return;
+                }
+            }
+            if me.pause_gen.load(Ordering::SeqCst) != gen {
+                return;
+            }
+            me.log.push("Пауза закончилась");
+            let _ = me.enable().await;
+            me.notify("Пауза закончилась", "Обход снова включён");
+        });
+    }
+
+    fn clear_pause(&self) {
+        self.pause_gen.fetch_add(1, Ordering::SeqCst);
+        if self.status().paused_until.is_some() {
+            self.update(|st| st.paused_until = None);
+        }
+    }
+
+    /// Уведомление Windows — только если окно не в фокусе (иначе и так всё видно).
+    fn notify(&self, title: &str, body: &str) {
+        if !self.settings().notifications {
+            return;
+        }
+        let focused = self.app.get_webview_window("main").is_some_and(|w| w.is_focused().unwrap_or(false));
+        if focused {
+            return;
+        }
+        let _ = self.app.notification().builder().title(title).body(body).show();
+    }
+
     pub async fn auto_select(self: &Arc<Self>) -> Result<()> {
+        self.disabled.store(false, Ordering::SeqCst);
+        self.clear_pause();
         let _g = self.op.lock().await;
         self.auto_select_locked().await
     }
@@ -345,6 +423,10 @@ impl Controller {
         self.stop_engine();
 
         let cancelled = self.cancel.swap(false, Ordering::SeqCst);
+        // «Выключить» во время подбора — не включать лучшую из проверенных.
+        if self.off_if_disabled() {
+            return Ok(());
+        }
         if !self.status().conflicts.is_empty() {
             self.fail(anyhow!("мешает другой обход — остановите его и попробуйте снова"));
             return Ok(());
@@ -385,6 +467,8 @@ impl Controller {
 
     /// Ручной выбор стратегии.
     pub async fn select(self: &Arc<Self>, id: &str) -> Result<()> {
+        self.disabled.store(false, Ordering::SeqCst);
+        self.clear_pause();
         let _g = self.op.lock().await;
         let s = self.find(id).ok_or_else(|| anyhow!("стратегия не найдена"))?;
         self.update(|st| {
@@ -426,7 +510,24 @@ impl Controller {
         }
     }
 
+    /// Если обход выключили посреди операции — гасит движок и оставляет «выключено».
+    fn off_if_disabled(&self) -> bool {
+        if !self.disabled.load(Ordering::SeqCst) {
+            return false;
+        }
+        self.stop_engine();
+        self.update(|st| {
+            st.mode = Mode::Off;
+            st.message = None;
+            st.progress = None;
+        });
+        true
+    }
+
     fn set_on(&self, s: &Strategy, r: &Report, note: Option<String>) {
+        if self.off_if_disabled() {
+            return;
+        }
         self.watchdog_fails.store(0, Ordering::SeqCst);
         self.update(|st| {
             st.mode = Mode::On;
@@ -440,8 +541,12 @@ impl Controller {
     }
 
     fn fail(&self, e: anyhow::Error) {
+        if self.off_if_disabled() {
+            return;
+        }
         self.stop_engine();
         self.log.push(format!("Ошибка: {e}"));
+        self.notify("Prosvet: ошибка", &e.to_string());
         self.update(|st| {
             st.mode = Mode::Error;
             st.message = Some(e.to_string());
@@ -481,8 +586,9 @@ impl Controller {
 
     pub async fn apply_settings(self: &Arc<Self>, mut new: Settings) -> Result<()> {
         let old = self.settings();
-        // Стратегией управляет только бэкенд (автоподбор/ручной выбор).
+        // Стратегией и версией управляет только бэкенд.
         new.strategy = old.strategy.clone();
+        new.last_version = old.last_version.clone();
         if new.autostart != old.autostart {
             system::set_autostart(new.autostart)?;
         }
@@ -638,6 +744,10 @@ impl Controller {
             drop(guard);
             self.log.push("Сторож: подбираю новую стратегию");
             let _ = self.auto_select().await;
+            let st = self.status();
+            if let (Mode::On, Some(s)) = (st.mode, st.strategy) {
+                self.notify("Prosvet сменил стратегию", &format!("Провайдер что-то поменял — теперь работает «{}»", s.name));
+            }
         }
     }
 
@@ -701,13 +811,94 @@ impl Controller {
             self.log.push("Расписание: сеть недоступна, подбор отложен до завтра");
             return;
         }
+        let before = self.status().strategy.map(|s| s.id);
         let _ = self.select_best(false).await;
+        let st = self.status();
+        if let (Mode::On, Some(s)) = (st.mode, st.strategy) {
+            if before.as_deref() != Some(s.id.as_str()) {
+                self.notify("Prosvet нашёл стратегию лучше", &format!("Теперь работает «{}»", s.name));
+            }
+        }
     }
 
     fn mark_scheduled(&self, day: i64) {
         let mut st = self.state.lock().unwrap();
         st.last_scheduled = Some(day);
         settings::save(&self.paths.state, &*st);
+    }
+
+    // ------------------------------------------------------------ самообновление
+
+    /// Проверяет новую версию Prosvet и показывает её в статусе.
+    pub async fn check_app_update(&self) -> Result<Option<AppUpdate>> {
+        if self.installing.load(Ordering::SeqCst) {
+            return Ok(self.status().app_update);
+        }
+        let found = appupdate::check().await?;
+        let known = self.status().app_update.map(|u| u.version);
+        if let Some(u) = &found {
+            if known.as_deref() != Some(u.version.as_str()) {
+                self.log.push(format!("Доступна новая версия Prosvet {}", u.version));
+                self.notify(&format!("Доступен Prosvet {}", u.version), "Откройте Prosvet, чтобы обновиться в один клик");
+            }
+        }
+        self.update(|st| st.app_update = found.clone());
+        Ok(found)
+    }
+
+    /// Скачивает и запускает установщик. При успехе приложение нужно сразу закрыть.
+    pub async fn install_app_update(self: &Arc<Self>) -> Result<()> {
+        if self.installing.swap(true, Ordering::SeqCst) {
+            bail!("обновление уже устанавливается");
+        }
+        let result = async {
+            let u = self.status().app_update.ok_or_else(|| anyhow!("новых версий нет"))?;
+            self.log.push(format!("Скачиваю Prosvet {}", u.version));
+            let set_progress = |p: u8| {
+                self.update(|st| {
+                    if let Some(a) = st.app_update.as_mut() {
+                        a.progress = Some(p);
+                    }
+                })
+            };
+            let installer = appupdate::download(&u, &self.paths.update, set_progress).await?;
+            self.log.push("Установщик проверен (SHA-256), запускаю установку");
+            // Дождаться конца текущей операции (подбор прервётся сам).
+            self.cancel();
+            let _g = self.op.lock().await;
+            appupdate::launch(&installer)
+        }
+        .await;
+        if let Err(e) = &result {
+            self.installing.store(false, Ordering::SeqCst);
+            self.log.push(format!("Ошибка: обновление Prosvet — {e}"));
+            self.update(|st| {
+                if let Some(a) = st.app_update.as_mut() {
+                    a.progress = None;
+                }
+            });
+        }
+        result
+    }
+
+    /// При запуске (через полминуты, когда поднимется обход) и затем раз в 12 часов.
+    pub fn spawn_app_update_checker(self: &Arc<Self>) {
+        let me = self.clone();
+        tauri::async_runtime::spawn(async move {
+            tokio::time::sleep(Duration::from_secs(30)).await;
+            loop {
+                if me.settings().app_update_check {
+                    if let Err(e) = me.check_app_update().await {
+                        me.log.push(format!("Проверка обновлений Prosvet не удалась: {e}"));
+                    }
+                }
+                tokio::time::sleep(Duration::from_secs(12 * 3600)).await;
+            }
+        });
+    }
+
+    pub fn dismiss_updated(&self) {
+        self.update(|st| st.updated_to = None);
     }
 
     pub fn shutdown(&self) {

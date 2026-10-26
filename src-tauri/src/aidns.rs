@@ -88,6 +88,9 @@ impl AiDns {
 
     /// `provider`: "auto" | id из [`PROVIDERS`].
     pub async fn start(&self, provider: &str, log: &Log) -> Result<()> {
+        if cfg!(not(windows)) {
+            bail!("разблокировка ИИ пока работает только в Windows");
+        }
         self.set_provider(provider);
         if !self.running() {
             // PROSVET_AI_PORT — другой порт для диагностики (NRPT работает только с 53)
@@ -174,6 +177,9 @@ fn apply_nrpt() -> Result<()> {
 
 /// Снимает наши правила (в том числе оставшиеся после аварийного завершения).
 pub fn remove_nrpt() {
+    if cfg!(not(windows)) {
+        return;
+    }
     let _ = ps(&format!(
         "Get-DnsClientNrptRule | Where-Object Comment -eq '{NRPT_COMMENT}' | Remove-DnsClientNrptRule -Force; Clear-DnsClientCache"
     ));

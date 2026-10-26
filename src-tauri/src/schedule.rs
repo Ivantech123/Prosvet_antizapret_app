@@ -24,10 +24,18 @@ pub fn local_now() -> Local {
     }
 }
 
-#[cfg(not(windows))]
+#[cfg(unix)]
 pub fn local_now() -> Local {
-    let s = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs() as i64).unwrap_or(0);
-    Local { day: s / 86400, minutes: s % 86400 / 60 }
+    let tm = unsafe {
+        let t = libc::time(std::ptr::null_mut());
+        let mut tm: libc::tm = std::mem::zeroed();
+        libc::localtime_r(&t, &mut tm);
+        tm
+    };
+    Local {
+        day: days_from_civil(tm.tm_year as i64 + 1900, tm.tm_mon as i64 + 1, tm.tm_mday as i64),
+        minutes: tm.tm_hour as i64 * 60 + tm.tm_min as i64,
+    }
 }
 
 /// Номер дня по григорианской дате (алгоритм Говарда Хиннанта).

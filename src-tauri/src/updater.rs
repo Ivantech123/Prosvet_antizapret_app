@@ -1,5 +1,6 @@
 //! Обновление движков и стратегий из релизов GitHub:
 //! Flowseal/zapret-discord-youtube (winws, стратегии, списки) и bol-van/zapret2 (winws2, lua).
+//! На Linux бинарники Flowseal не нужны: nfqws берётся из bol-van/zapret, nfqws2 — из zapret2.
 
 use std::fs;
 use std::io::{Cursor, Read};
@@ -28,6 +29,15 @@ struct Asset {
     name: String,
     browser_download_url: String,
 }
+
+/// Папка бинарников zapret/zapret2 для этой системы.
+const BIN_DIR: &str = if cfg!(windows) {
+    "binaries/windows-x86_64"
+} else if cfg!(target_arch = "aarch64") {
+    "binaries/linux-arm64"
+} else {
+    "binaries/linux-x86_64"
+};
 
 fn client() -> reqwest::Client {
     reqwest::Client::builder()
@@ -80,13 +90,28 @@ pub async fn download() -> Result<Downloaded> {
         async move { Ok::<_, anyhow::Error>(c.get(u).send().await?.error_for_status()?.bytes().await?.to_vec()) }
     };
     let (fs_zip, z2_zip) = tokio::try_join!(get(fs_url.clone()), get(z2_url.clone()))?;
-    Ok(Downloaded { versions: Versions { flowseal: fs.tag_name, zapret2: z2.tag_name }, fs_zip, z2_zip })
+    // Linux: nfqws для стратегий Flowseal — из bol-van/zapret
+    let z1_zip = if cfg!(windows) {
+        None
+    } else {
+        let z1 = latest(&c, "bol-van/zapret").await?;
+        let url = z1
+            .assets
+            .iter()
+            .find(|a| a.name.starts_with("zapret-v") && a.name.ends_with(".zip") && !a.name.contains("openwrt"))
+            .ok_or_else(|| anyhow!("в релизе zapret нет zip"))?
+            .browser_download_url
+            .clone();
+        Some(get(url).await?)
+    };
+    Ok(Downloaded { versions: Versions { flowseal: fs.tag_name, zapret2: z2.tag_name }, fs_zip, z2_zip, z1_zip })
 }
 
 pub struct Downloaded {
     pub versions: Versions,
     fs_zip: Vec<u8>,
     z2_zip: Vec<u8>,
+    z1_zip: Option<Vec<u8>>,
 }
 
 pub fn install(paths: &Paths, d: &Downloaded) -> Result<()> {
@@ -103,7 +128,8 @@ pub fn install(paths: &Paths, d: &Downloaded) -> Result<()> {
         let name = parts.last()?.to_string();
         let lower = name.to_lowercase();
         if parts.len() >= 2 && parts[parts.len() - 2] == "bin" {
-            Some(paths.z1.join(name))
+            // на Linux из bin/ нужны только фейки, exe/dll/sys — для Windows
+            (cfg!(windows) || lower.ends_with(".bin")).then(|| paths.z1.join(name))
         } else if parts.len() >= 2 && parts[parts.len() - 2] == "lists" {
             Some(lists_tmp.join(name))
         } else if lower.starts_with("general") && lower.ends_with(".bat") {
@@ -118,7 +144,7 @@ pub fn install(paths: &Paths, d: &Downloaded) -> Result<()> {
     extract(&d.z2_zip, |parts| {
         let name = parts.last()?.to_string();
         let dir = parts[..parts.len() - 1].join("/");
-        if dir.ends_with("binaries/windows-x86_64") {
+        if dir.ends_with(BIN_DIR) {
             Some(paths.z2.join(name))
         } else if parts.len() == 3 && parts[1] == "lua" && name.ends_with(".lua") {
             Some(paths.z2.join("lua").join(name))
@@ -135,6 +161,15 @@ pub fn install(paths: &Paths, d: &Downloaded) -> Result<()> {
             let _ = fs::copy(e.path(), paths.z2.join("fake").join(e.file_name()));
         }
     }
+
+    if let Some(z1) = &d.z1_zip {
+        extract(z1, |parts| {
+            let name = parts.last()?.to_string();
+            let dir = parts[..parts.len() - 1].join("/");
+            (dir.ends_with(BIN_DIR) && name == "nfqws").then(|| paths.z1.join(name))
+        })?;
+    }
+    paths.make_executable();
 
     crate::settings::save(&paths.version_file(), &d.versions);
     let _ = fs::remove_dir_all(&staging);

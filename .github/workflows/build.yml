@@ -1,0 +1,132 @@
+# Сборка всех версий Prosvet.
+#   • Windows x64: установщик NSIS (его ищет самообновление), MSI и портативный zip
+#   • Linux x86_64 и arm64: .deb, .rpm, AppImage
+# Запуск: вручную (Actions → Build → Run workflow) или тегом vX.Y.Z — тогда
+# собранное сразу прикладывается к релизу на GitHub.
+
+name: Build
+
+on:
+  workflow_dispatch:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+      - run: npm ci
+      - name: Движки
+        run: npm run engine
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Тесты (включая прогон стратегий через --dry-run)
+        run: cargo test --lib
+        working-directory: src-tauri
+      - name: Сборка NSIS + MSI
+        run: npx tauri build --bundles nsis,msi
+      - name: Портативный zip
+        shell: pwsh
+        run: |
+          $v = (Get-Content package.json | ConvertFrom-Json).version
+          $dir = "portable/Prosvet"
+          New-Item -ItemType Directory -Force "$dir/resources" | Out-Null
+          Copy-Item src-tauri/target/release/prosvet.exe "$dir/Prosvet.exe"
+          Copy-Item -Recurse src-tauri/resources/engine "$dir/resources/engine"
+          Compress-Archive -Path $dir -DestinationPath "Prosvet_${v}_x64-portable.zip"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows-x64
+          path: |
+            src-tauri/target/release/bundle/nsis/*.exe
+            src-tauri/target/release/bundle/msi/*.msi
+            Prosvet_*_x64-portable.zip
+
+  linux:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-22.04
+            arch: x86_64
+          - runner: ubuntu-22.04-arm
+            arch: arm64
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Системные зависимости
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev \
+            libssl-dev libxdo-dev patchelf file rpm unzip nftables
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+          key: ${{ matrix.arch }}
+      - run: npm ci
+      - name: Движки
+        run: bash scripts/fetch-engine.sh ${{ matrix.arch }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Тесты (включая прогон стратегий через --dry-run)
+        run: cargo test --lib
+        working-directory: src-tauri
+      - name: Правила nftables принимаются ядром
+        run: cargo test --lib -- --ignored nft_ruleset_applies
+        working-directory: src-tauri
+      - name: Сборка deb + rpm + AppImage
+        run: npx tauri build --bundles deb,rpm,appimage
+      - uses: actions/upload-artifact@v4
+        with:
+          name: linux-${{ matrix.arch }}
+          path: |
+            src-tauri/target/release/bundle/deb/*.deb
+            src-tauri/target/release/bundle/rpm/*.rpm
+            src-tauri/target/release/bundle/appimage/*.AppImage
+
+  release:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [windows, linux]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+      - name: Контрольные суммы
+        run: |
+          cd dist
+          find . -type f \( -name '*.exe' -o -name '*.msi' -o -name '*.zip' -o -name '*.deb' -o -name '*.rpm' -o -name '*.AppImage' \) \
+            -exec mv {} . \;
+          sha256sum *.exe *.msi *.zip *.deb *.rpm *.AppImage > SHA256SUMS.txt
+          cat SHA256SUMS.txt
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            dist/*.exe
+            dist/*.msi
+            dist/*.zip
+            dist/*.deb
+            dist/*.rpm
+            dist/*.AppImage
+            dist/SHA256SUMS.txt

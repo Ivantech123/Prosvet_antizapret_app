@@ -72,6 +72,12 @@ pub struct Settings {
     pub schedule_time: String,
     /// Перед подбором по расписанию обновлять движки и стратегии.
     pub schedule_update: bool,
+    /// Уведомления Windows, когда окно свёрнуто: смена стратегии, ошибки, новая версия.
+    pub notifications: bool,
+    /// Проверять новые версии Prosvet при запуске и раз в 12 часов.
+    pub app_update_check: bool,
+    /// Версия, с которой приложение запускалось в прошлый раз (для «Prosvet обновлён»).
+    pub last_version: String,
 }
 
 impl Default for Settings {
@@ -93,6 +99,9 @@ impl Default for Settings {
             schedule: false,
             schedule_time: "03:00".into(),
             schedule_update: false,
+            notifications: true,
+            app_update_check: true,
+            last_version: String::new(),
         }
     }
 }

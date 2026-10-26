@@ -24,6 +24,8 @@ let status = { mode: "off", services: [], conflicts: [] };
 let settings = {};
 let info = null;
 let page = "home";
+let appChecked = false; // ручная проверка уже сказала «последняя версия»
+let appLater = null; // «Позже» — прячем баннер этой версии до перезапуска
 
 /* Логотипы — Simple Icons (CC0). */
 const SERVICES = {
@@ -160,13 +162,34 @@ function renderBanners() {
       <button class="btn small" data-act="ai-off">Выключить</button>
     </div>`);
   }
+  const u = status.app_update;
+  if (u && appLater !== u.version) {
+    const loading = u.progress != null;
+    out.push(`<div class="glass banner gold">
+      <div class="banner-text"><b>Доступен Prosvet ${esc(u.version)}.</b> <span>${loading ? `Скачиваю… ${u.progress}%` : "Установка займёт минуту, обход ненадолго прервётся."}</span></div>
+      ${loading ? "" : `<button class="btn small" data-act="app-notes">Что нового</button><button class="btn small" data-act="app-later">Позже</button><button class="btn small primary" data-act="app-install">Обновить</button>`}
+    </div>`);
+  }
+  if (status.updated_to) {
+    out.push(`<div class="glass banner gold">
+      <div class="banner-text"><b>Prosvet обновлён до ${esc(status.updated_to)}.</b> <span>Настройки и стратегии на месте.</span></div>
+      <button class="btn small" data-act="app-notes">Что нового</button><button class="btn small" data-act="updated-ok">Хорошо</button>
+    </div>`);
+  }
   if (info && !info.defender_ok) {
     out.push(`<div class="glass banner">
       <div class="banner-text"><b>Defender может удалить движок.</b> <span>Добавьте исключение, чтобы обход не пропал.</span></div>
       <button class="btn small" data-act="defender">Добавить</button>
     </div>`);
   }
-  $("#banners").innerHTML = out.join("");
+  // Тот же набор баннеров (например, меняется только процент загрузки) — без анимации появления.
+  const box = $("#banners");
+  const html = out.join("");
+  if (html === box.innerHTML) return;
+  const kinds = out.map((b) => b.slice(0, 80)).join("|");
+  box.classList.toggle("still", kinds === box.dataset.kinds);
+  box.dataset.kinds = kinds;
+  box.innerHTML = html;
 }
 
 function renderStatus() {
@@ -184,7 +207,8 @@ function renderStatus() {
     if (status.message) sub += `<span>${esc(status.message)}</span>`;
     else if (status.checked_at) sub += `<span>проверено в ${timeOf(status.checked_at)}</span>`;
     if (settings.schedule && settings.schedule_time) sub += `<span class="next" title="Подбор по расписанию"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.5" /><path d="M12 7.5V12l3 2" /></svg>подбор в ${esc(settings.schedule_time)}</span>`;
-  } else if (m === "off") sub = "Нажмите — и пусть будет свет";
+  } else if (m === "off" && status.paused_until) sub = `Обход включится сам в ${timeOf(status.paused_until)}`;
+  else if (m === "off") sub = "Нажмите — и пусть будет свет";
   else sub = esc(status.message || "");
   $("#hero-sub").innerHTML = sub;
 
@@ -195,12 +219,20 @@ function renderStatus() {
     $("#progress-text").textContent = `${p.done} / ${p.total} · ${p.name}${p.best ? ` — лучшая: ${p.best}` : ""}`;
   }
   $("#btn-cancel").hidden = m !== "testing";
+  $("#btn-pause").hidden = m !== "on";
+  if (m !== "on") $("#pause-opts").hidden = true;
+  if (m === "off" && status.paused_until) {
+    $("#eyebrow").textContent = "Пауза";
+    $("#hero-title").textContent = "На паузе";
+    $("#cta-text").textContent = "Включить сейчас";
+  }
   $("#btn-reselect").hidden = m === "testing";
   $("#btn-check").disabled = busy(m);
   $("#btn-reselect").disabled = busy(m);
 
   renderServices();
   renderBanners();
+  renderAppUpdate();
   onbStatus();
   if (page === "strategies") loadStrategies();
 }
@@ -306,6 +338,35 @@ async function saveList() {
   $("#list-saved").textContent = "Сохранено ✓";
 }
 
+/* ───────────── проверка сайта ───────────── */
+
+async function checkSite() {
+  const url = $("#site-input").value.trim();
+  if (!url) return $("#site-input").focus();
+  const box = $("#site-result");
+  $("#btn-site").disabled = true;
+  box.hidden = false;
+  box.className = "site-result";
+  box.innerHTML = `<div class="msg"><span>Проверяю ${esc(url)}…</span></div>`;
+  try {
+    const r = await api.invoke("check_site", { url });
+    const ok = r.result.ok;
+    const sec = (r.result.ms / 1000).toFixed(1);
+    const where = r.listed ? `уже в «${esc(r.listed)}»` : "";
+    let hint = "";
+    if (!ok && !r.listed) hint = status.mode === "on" ? "Добавьте его в список — обход перезапустится с ним" : "Включите обход и добавьте сайт в список";
+    else if (!ok) hint = "Обход не помог — возможно, блокировка по IP, попробуйте другую стратегию";
+    box.className = `site-result ${ok ? "ok" : "bad"}`;
+    box.innerHTML = `<div class="msg"><b>${ok ? "✓" : "✗"} ${esc(r.host)}</b> ${ok ? `открывается · ${sec} с` : esc(r.result.error || "не открывается")}
+      <br /><span>${[where, hint].filter(Boolean).join(" · ")}</span></div>
+      ${r.listed ? "" : `<button class="btn small${ok ? "" : " primary"}" data-add="${esc(r.host)}">В «Обходить»</button>`}`;
+  } catch (e) {
+    box.className = "site-result bad";
+    box.innerHTML = `<div class="msg"><b>✗</b> ${esc(e)}</div>`;
+  }
+  $("#btn-site").disabled = false;
+}
+
 /* ───────────── журнал ───────────── */
 
 function logLine(line) {
@@ -351,6 +412,45 @@ async function saveSetting(key, value) {
   await call("set_settings", { settings });
 }
 
+/* ───────────── обновление Prosvet ───────────── */
+
+function renderAppUpdate() {
+  const u = status.app_update;
+  $("#app-cur").textContent = info?.version || "";
+  let text = appChecked ? "Установлена последняя версия ✓" : "Новые версии — из релизов GitHub, с проверкой SHA-256";
+  if (u) {
+    const mb = u.size ? ` · ${(u.size / 1048576).toFixed(1)} МБ` : "";
+    text = u.progress != null ? `Скачиваю ${u.version}… ${u.progress}%` : `Доступна версия ${u.version}${mb}`;
+  }
+  $("#app-update-text").textContent = text;
+  $("#btn-app-install").hidden = !u;
+  $("#btn-app-install").disabled = u?.progress != null;
+}
+
+async function checkApp() {
+  $("#btn-app-check").disabled = true;
+  try {
+    const u = await call("check_app_update");
+    appChecked = !u;
+    toast(u ? `Доступна версия ${u.version}` : "У вас последняя версия");
+    renderAppUpdate();
+  } catch {}
+  $("#btn-app-check").disabled = false;
+}
+
+async function installApp() {
+  toast("Скачиваю обновление — Prosvet перезапустится сам", 4000);
+  try {
+    await call("install_app_update");
+  } catch {}
+}
+
+function openNotes() {
+  const v = status.app_update?.version;
+  const repo = info?.repo;
+  if (repo) api.open(`https://github.com/${repo}/releases${v ? `/tag/v${v}` : ""}`);
+}
+
 async function loadInfo() {
   info = await api.invoke("get_info");
   const e = info.engines || {};
@@ -359,7 +459,17 @@ async function loadInfo() {
   $("#btn-defender").hidden = info.defender_ok;
   $("#data-dir").textContent = info.data_dir;
   $("#app-version").textContent = info.version;
+  // Linux: нет Defender и пока нет разблокировки ИИ (она на NRPT Windows)
+  if (info.os && info.os !== "windows") {
+    document.body.dataset.os = info.os;
+    $("#btn-defender").closest(".field").hidden = true;
+    $("[data-key=ai_unlock]").closest(".card").hidden = true;
+    const auto = $("[data-key=autostart]").closest(".toggle");
+    auto.querySelector("b").textContent = "Запускать вместе с системой";
+    auto.querySelector("small").textContent = "Тихо, в трее. Права администратора спросит при включении обхода";
+  }
   renderBanners();
+  renderAppUpdate();
 }
 
 async function addDefender() {
@@ -500,9 +610,18 @@ function bind() {
   $("#win-min").onclick = () => api.minimize();
   $("#win-close").onclick = () => api.invoke("close_main");
   $$(".tab").forEach((t) => (t.onclick = () => go(t.dataset.page)));
-  // Esc — спрятать окно в трей
+  // Esc — в трей, Ctrl+Enter — вкл/выкл, F5 — проверить доступ, Ctrl+1…5 — вкладки
   addEventListener("keydown", (e) => {
-    if (e.key === "Escape" && document.activeElement?.tagName !== "TEXTAREA") api.invoke("close_main");
+    const typing = /^(TEXTAREA|INPUT)$/.test(document.activeElement?.tagName || "");
+    if (e.key === "Escape" && !typing) api.invoke("close_main");
+    else if (e.key === "Enter" && e.ctrlKey && !typing) (e.preventDefault(), $("#power").click());
+    else if (e.key === "F5") {
+      e.preventDefault(); // в WebView F5 перезагрузил бы интерфейс
+      if (!$("#btn-check").disabled) $("#btn-check").click();
+    } else if (e.ctrlKey && !e.altKey && /^[1-5]$/.test(e.key)) {
+      const tab = $$(".tab")[+e.key - 1];
+      if (tab) (e.preventDefault(), go(tab.dataset.page));
+    }
   });
   addEventListener("resize", moveInk);
   document.fonts?.ready.then(moveInk);
@@ -533,6 +652,10 @@ function bind() {
     if (act === "resolve") api.invoke("resolve_conflicts").then(() => toast("Остановлено"));
     if (act === "defender") addDefender();
     if (act === "ai-off") saveSetting("ai_unlock", false);
+    if (act === "app-install") installApp();
+    if (act === "app-notes") openNotes();
+    if (act === "app-later") (appLater = status.app_update?.version), renderBanners();
+    if (act === "updated-ok") api.invoke("dismiss_updated");
   };
 
   $("#strategy-filter").onclick = (e) => {
@@ -573,6 +696,32 @@ function bind() {
     $("#log").dataset.f = b.dataset.f;
     $("#log").scrollTop = $("#log").scrollHeight;
   };
+  $("#btn-diag").onclick = async () => {
+    $("#btn-diag").disabled = true;
+    try {
+      await call("export_diagnostics");
+      toast("Отчёт сохранён — приложите его к сообщению об ошибке", 4200);
+    } catch {}
+    $("#btn-diag").disabled = false;
+  };
+  $("#btn-pause").onclick = () => ($("#pause-opts").hidden = !$("#pause-opts").hidden);
+  $("#pause-opts").onclick = (e) => {
+    const b = e.target.closest("button");
+    if (!b) return;
+    $("#pause-opts").hidden = true;
+    call("pause_bypass", { minutes: +b.dataset.min }).catch(() => {});
+  };
+  $("#site-form").onsubmit = (e) => (e.preventDefault(), checkSite());
+  $("#site-result").onclick = async (e) => {
+    const host = e.target.closest("[data-add]")?.dataset.add;
+    if (!host) return;
+    try {
+      await call("add_site", { host });
+      toast(`${host} добавлен в «Обходить»`);
+      if (currentList === "list-general-user.txt") await loadList();
+      checkSite();
+    } catch {}
+  };
   $("#btn-copy-log").onclick = async () => {
     const text = $$("#log .ln").map((r) => `${r.firstChild.textContent} ${r.lastChild.textContent}`).join("\n");
     await navigator.clipboard.writeText(text);
@@ -604,6 +753,9 @@ function bind() {
     $("#btn-update").disabled = false;
   };
   $("#btn-defender").onclick = addDefender;
+  $("#btn-app-check").onclick = checkApp;
+  $("#btn-app-install").onclick = installApp;
+  $("#app-notes-link").onclick = (e) => (e.preventDefault(), openNotes());
   $("#btn-open-dir").onclick = () => api.invoke("open_data_dir");
   $$("[data-url]").forEach((a) => (a.onclick = (e) => (e.preventDefault(), api.open(a.dataset.url))));
 
@@ -650,10 +802,16 @@ init();
 
 /* ════════════════════════════════════════════════════════════════
    Мок для просмотра дизайна в браузере (без Tauri)
-   #dark | #light, &page=strategies, &bottom, &onb=0..3, &run
+   #dark | #light, &page=strategies, &bottom, &onb=0..3, &run, &upd, &site=rutracker.org
    ════════════════════════════════════════════════════════════════ */
 function previewFromHash() {
   const h = new URLSearchParams(location.hash.slice(1));
+  // ?shot — съёмка скриншотов: без CSS-переходов, иначе кадр ловит их середину
+  if (new URLSearchParams(location.search).has("shot")) {
+    const st = document.createElement("style");
+    st.textContent = "*,*::before,*::after{transition:none!important;animation-duration:0s!important;animation-delay:0s!important}";
+    document.head.appendChild(st);
+  }
   if (h.has("dark")) applyTheme("dark");
   if (h.has("light")) applyTheme("light");
   if (h.get("page")) go(h.get("page"));
@@ -665,13 +823,19 @@ function previewFromHash() {
     else onbGo(n);
   }
   if (h.has("run")) api.invoke("enable");
+  if (h.has("upd")) api.invoke("check_app_update");
+  if (h.get("site")) {
+    go("lists");
+    $("#site-input").value = h.get("site");
+    checkSite();
+  }
 }
 
 function mockApi() {
   const handlers = {};
   const emit = (ev, p) => (handlers[ev] || []).forEach((f) => f(p));
   let st = { mode: "off", services: [], conflicts: [], strategy: null, progress: null, message: null, checked_at: null };
-  let set = { enable_on_launch: true, autostart: false, watchdog: true, watchdog_interval: 180, fast_select: true, close_to_tray: true, game_filter: "off", ipset: "none", theme: "system", onboarded: true, ai_unlock: true, ai_provider: "auto", schedule: true, schedule_time: "03:00", schedule_update: false };
+  let set = { enable_on_launch: true, autostart: false, watchdog: true, watchdog_interval: 180, fast_select: true, close_to_tray: true, game_filter: "off", ipset: "none", theme: "system", onboarded: true, ai_unlock: true, ai_provider: "auto", schedule: true, schedule_time: "03:00", schedule_update: false, app_update_check: true, notifications: true };
   const strategies = [
     ["z2-seqovl-google", "Seqovl · Google", "z2", "multisplit с перекрытием seq фейковым ClientHello google.com"],
     ["z2-fake-disorder-md5", "Fake + disorder · MD5", "z2", "фейк с подменой SNI и MD5-подписью, затем сегменты в обратном порядке"],
@@ -715,7 +879,30 @@ function mockApi() {
       "12:03:07 Сторож: всё работает 11/11",
     ],
     get_strategies: () => strategies.map(([id, name, engine, hint], i) => ({ id, name, engine, hint, active: st.strategy?.id === id, score: MOCK_SCORES[i] && { passed: MOCK_SCORES[i][0], total: 11, latency_ms: MOCK_SCORES[i][1] } })),
-    get_info: () => ({ version: "0.1.0", engines: { flowseal: "1.10.3", zapret2: "v1.0.5.2" }, data_dir: "C:\\Users\\you\\AppData\\Local\\Prosvet", defender_ok: true }),
+    check_app_update: () => {
+      push({ app_update: { version: "0.4.0", notes: "", size: 9_400_000, progress: null } });
+      return st.app_update;
+    },
+    install_app_update: () =>
+      new Promise((ok) => {
+        let p = 0;
+        const t = setInterval(() => {
+          p = Math.min(100, p + 9);
+          push({ app_update: { ...st.app_update, progress: p } });
+          if (p === 100) (clearInterval(t), ok());
+        }, 250);
+      }),
+    dismiss_updated: () => push({ updated_to: null }),
+    pause_bypass: ({ minutes }) => push({ mode: "off", progress: null, paused_until: Date.now() / 1000 + minutes * 60 }),
+    check_site: async ({ url }) => {
+      await new Promise((r) => setTimeout(r, 700));
+      const host = url.replace(/^\w+:\/\//, "").replace(/^www\./, "").split("/")[0].toLowerCase();
+      const ok = host.length % 2 === 0;
+      return { host, listed: host.includes("youtube") ? "список Flowseal" : null, result: { ok, ms: 830, error: ok ? null : "таймаут после 16 КБ" } };
+    },
+    add_site: () => null,
+    export_diagnostics: () => "C:\\Users\\you\\AppData\\Local\\Prosvet\\diagnostics\\prosvet-diag.zip",
+    get_info: () => ({ version: "0.3.1", repo: "Ivantech123/Prosvet_antizapret_app", engines: { flowseal: "1.10.3", zapret2: "v1.0.5.2" }, data_dir: "C:\\Users\\you\\AppData\\Local\\Prosvet", defender_ok: true }),
     enable: () => select(),
     auto_select: () => select(),
     disable: () => push({ mode: "off", progress: null }),

@@ -1,6 +1,9 @@
 mod aidns;
+mod appupdate;
 mod controller;
+mod diag;
 mod engine;
+mod helper;
 mod paths;
 mod schedule;
 mod settings;
@@ -138,8 +141,122 @@ async fn check_updates(c: Ctl<'_>) -> Res<(updater::Versions, updater::Versions)
 }
 
 #[derive(Serialize)]
+struct SiteCheck {
+    host: String,
+    result: tester::TargetResult,
+    /// В каком списке домен уже есть: «ваш список», «список Flowseal» или None.
+    listed: Option<&'static str>,
+}
+
+/// «rutracker.org/forum» → ("https://rutracker.org/forum", "rutracker.org").
+fn normalize_site(input: &str) -> Res<(String, String)> {
+    let s = input.trim();
+    if s.is_empty() {
+        return Err("введите адрес сайта".into());
+    }
+    let full = if s.contains("://") { s.to_string() } else { format!("https://{s}") };
+    let u = reqwest::Url::parse(&full).map_err(|_| "непонятный адрес".to_string())?;
+    if !matches!(u.scheme(), "http" | "https") {
+        return Err("нужен адрес сайта (http или https)".into());
+    }
+    let host = u.host_str().ok_or("в адресе нет домена")?.to_lowercase();
+    let host = host.strip_prefix("www.").unwrap_or(&host).to_string();
+    Ok((u.to_string(), host))
+}
+
+/// Домен или его родитель есть в списке.
+fn in_list(path: &std::path::Path, host: &str) -> bool {
+    fs::read_to_string(path).is_ok_and(|text| {
+        text.lines().map(str::trim).any(|l| !l.is_empty() && !l.starts_with('#') && (host == l || host.ends_with(&format!(".{l}"))))
+    })
+}
+
+fn listed(c: &Controller, host: &str) -> Option<&'static str> {
+    if in_list(&c.paths.lists.join("list-general-user.txt"), host) {
+        Some("ваш список")
+    } else if in_list(&c.paths.lists.join("list-general.txt"), host) {
+        Some("список Flowseal")
+    } else {
+        None
+    }
+}
+
+#[tauri::command]
+async fn check_site(c: Ctl<'_>, url: String) -> Res<SiteCheck> {
+    let (url, host) = normalize_site(&url)?;
+    let result = tester::check_url(&url).await;
+    c.log.push(format!(
+        "{} Проверка {host} — {}",
+        if result.ok { "✓" } else { "✗" },
+        result.error.as_deref().unwrap_or("открывается")
+    ));
+    Ok(SiteCheck { listed: listed(&c, &host), host, result })
+}
+
+/// Добавляет домен в «Обходить» и перезапускает движок.
+#[tauri::command]
+async fn add_site(c: Ctl<'_>, host: String) -> Res<()> {
+    let host = host.trim().to_lowercase();
+    let valid = host.contains('.') && host.chars().all(|ch| ch.is_ascii_alphanumeric() || ch == '-' || ch == '.');
+    if !valid {
+        return Err("это не похоже на домен".into());
+    }
+    let path = c.paths.lists.join("list-general-user.txt");
+    if in_list(&path, &host) {
+        return Ok(());
+    }
+    let text = fs::read_to_string(&path).unwrap_or_default();
+    let mut lines: Vec<&str> = text.lines().map(str::trim).filter(|l| !l.is_empty() && *l != "domain.example.abc").collect();
+    lines.push(&host);
+    fs::write(&path, lines.join("\n") + "\n").map_err(err)?;
+    c.log.push(format!("Добавлен в список: {host}"));
+    c.inner().clone().restart_if_running().await.map_err(err)
+}
+
+#[tauri::command]
+fn pause_bypass(c: Ctl, minutes: u64) {
+    c.inner().pause(minutes.clamp(1, 24 * 60));
+}
+
+/// Собирает отчёт для баг-репорта и показывает его в проводнике.
+#[tauri::command]
+async fn export_diagnostics(c: Ctl<'_>) -> Res<String> {
+    let c = c.inner().clone();
+    let path = tauri::async_runtime::spawn_blocking(move || diag::export(&c)).await.map_err(err)?.map_err(err)?;
+    system::reveal(&path);
+    Ok(path.display().to_string())
+}
+
+#[tauri::command]
+async fn check_app_update(c: Ctl<'_>) -> Res<Option<appupdate::AppUpdate>> {
+    c.check_app_update().await.map_err(err)
+}
+
+#[tauri::command]
+async fn install_app_update(app: AppHandle, c: Ctl<'_>) -> Res<()> {
+    c.inner().clone().install_app_update().await.map_err(err)?;
+    quit(&app);
+    Ok(())
+}
+
+#[tauri::command]
+fn dismiss_updated(c: Ctl) {
+    c.dismiss_updated();
+}
+
+/// Точка входа root-помощника на Linux.
+#[cfg(unix)]
+pub fn helper_main() -> ! {
+    helper::main()
+}
+
+#[derive(Serialize)]
 struct Info {
     version: &'static str,
+    /// windows | linux — интерфейс прячет то, чего в системе нет.
+    os: &'static str,
+    /// Репозиторий релизов Prosvet — для ссылки «что нового».
+    repo: &'static str,
     engines: updater::Versions,
     data_dir: String,
     defender_ok: bool,
@@ -150,6 +267,8 @@ async fn get_info(c: Ctl<'_>) -> Res<Info> {
     let paths = c.paths.clone();
     tauri::async_runtime::spawn_blocking(move || Info {
         version: env!("CARGO_PKG_VERSION"),
+        os: std::env::consts::OS,
+        repo: appupdate::REPO,
         engines: updater::installed(&paths),
         data_dir: paths.data.display().to_string(),
         defender_ok: system::defender_excluded(&paths.data),
@@ -216,6 +335,35 @@ pub(crate) fn reselect(app: &AppHandle) {
     });
 }
 
+/// Проверка доступа из трея.
+pub(crate) fn check_access(app: &AppHandle) {
+    let c = app.state::<Arc<Controller>>().inner().clone();
+    tauri::async_runtime::spawn(async move {
+        let _ = c.check().await;
+    });
+}
+
+pub(crate) fn pause(app: &AppHandle, minutes: u64) {
+    app.state::<Arc<Controller>>().inner().pause(minutes);
+}
+
+/// Пункт трея «Обновления»: есть новая версия — ставим, нет — проверяем.
+pub(crate) fn app_update(app: &AppHandle) {
+    let c = app.state::<Arc<Controller>>().inner().clone();
+    let app = app.clone();
+    tauri::async_runtime::spawn(async move {
+        if c.status().app_update.is_none() {
+            match c.check_app_update().await {
+                Ok(Some(_)) => show_main(&app),
+                Ok(None) => c.log.push("Установлена последняя версия Prosvet"),
+                Err(e) => c.log.push(format!("Проверка обновлений Prosvet не удалась: {e}")),
+            }
+        } else if c.install_app_update().await.is_ok() {
+            quit(&app);
+        }
+    });
+}
+
 pub(crate) fn quit(app: &AppHandle) {
     app.state::<Arc<Controller>>().shutdown();
     app.exit(0);
@@ -228,6 +376,7 @@ pub fn run() {
     let app = tauri::Builder::default()
         .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| show_main(app)))
         .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_notification::init())
         .setup(move |app| {
             let handle = app.handle().clone();
             let paths = paths::Paths::new()?;
@@ -262,6 +411,7 @@ pub fn run() {
             }
             c.spawn_watchdog();
             c.spawn_scheduler();
+            c.spawn_app_update_checker();
             Ok(())
         })
         .on_window_event(|window, event| {
@@ -294,6 +444,13 @@ pub fn run() {
             add_defender_exclusion,
             open_data_dir,
             close_main,
+            check_app_update,
+            install_app_update,
+            dismiss_updated,
+            check_site,
+            add_site,
+            pause_bypass,
+            export_diagnostics,
         ])
         .build(tauri::generate_context!())
         .expect("ошибка запуска Prosvet");
@@ -305,4 +462,26 @@ pub fn run() {
             }
         }
     });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn normalizes_sites() {
+        assert_eq!(normalize_site(" rutracker.org/forum ").unwrap(), ("https://rutracker.org/forum".into(), "rutracker.org".into()));
+        assert_eq!(normalize_site("http://WWW.Example.com").unwrap().1, "example.com");
+        assert!(normalize_site("").is_err());
+        assert!(normalize_site("ftp://example.com").is_err());
+    }
+
+    #[test]
+    fn finds_parent_domain_in_list() {
+        let p = std::env::temp_dir().join("prosvet-test-list.txt");
+        fs::write(&p, "# свои\nyoutube.com\n").unwrap();
+        assert!(in_list(&p, "youtube.com") && in_list(&p, "m.youtube.com"));
+        assert!(!in_list(&p, "notyoutube.com"));
+        let _ = fs::remove_file(p);
+    }
 }

@@ -61,7 +61,13 @@
           <button class="link" id="btn-reselect">
             <svg viewBox="0 0 24 24"><path d="M12 3l2.4 5 5.6.8-4 3.9.9 5.5L12 15.6 7.1 18.2 8 12.7 4 8.8 9.6 8z" /></svg>Подобрать заново
           </button>
+          <button class="link" id="btn-pause" hidden>
+            <svg viewBox="0 0 24 24"><path d="M9 5.5v13M15 5.5v13" /></svg>Пауза
+          </button>
           <button class="link danger" id="btn-cancel" hidden>Остановить подбор</button>
+        </div>
+        <div class="seg pause-opts" id="pause-opts" hidden>
+          <button data-min="15">15 минут</button><button data-min="60">1 час</button><button data-min="180">3 часа</button>
         </div>
       </div>
 
@@ -97,6 +103,14 @@
           <p class="sub">Свои домены и исключения — по одному на строку, поддомены учитываются сами.</p>
         </div>
       </div>
+      <div class="glass sitecheck">
+        <form class="site-row" id="site-form">
+          <svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="6.5" /><path d="M16 16l4.5 4.5" /></svg>
+          <input id="site-input" placeholder="Проверить сайт, например rutracker.org" autocomplete="off" spellcheck="false" />
+          <button class="btn primary small" id="btn-site">Проверить</button>
+        </form>
+        <div class="site-result" id="site-result" hidden></div>
+      </div>
       <div class="seg" id="list-tabs">
         <button data-list="list-general-user.txt" class="on">Обходить</button>
         <button data-list="list-exclude-user.txt">Не трогать</button>
@@ -123,9 +137,14 @@
           <h2>Журнал</h2>
           <p class="sub">Что делает Prosvet и что отвечает движок.</p>
         </div>
+        <div class="row">
+        <button class="btn" id="btn-diag" title="Zip с журналом, настройками и версиями — для сообщения об ошибке">
+          <svg viewBox="0 0 24 24"><path d="M12 4v11" /><path d="M7.5 10.5 12 15l4.5-4.5" /><path d="M5 19.5h14" /></svg>Отчёт
+        </button>
         <button class="btn" id="btn-copy-log">
           <svg viewBox="0 0 24 24"><rect x="8" y="8" width="12" height="12" rx="3" /><path d="M16 8V6a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h2" /></svg>Скопировать
         </button>
+        </div>
       </div>
       <div class="seg" id="log-filter">
         <button data-f="all" class="on">Всё</button>
@@ -145,6 +164,7 @@
         <label class="toggle"><span><b>Запускать вместе с Windows</b><small>Тихо, в трее, без запроса прав</small></span><input type="checkbox" data-key="autostart" /><i></i></label>
         <label class="toggle"><span><b>Сторож</b><small>Сам меняет стратегию, если провайдер что-то поменял</small></span><input type="checkbox" data-key="watchdog" /><i></i></label>
         <label class="toggle"><span><b>Быстрый подбор</b><small>Остановиться на первой стратегии, прошедшей все проверки</small></span><input type="checkbox" data-key="fast_select" /><i></i></label>
+        <label class="toggle"><span><b>Уведомления</b><small>Когда окно скрыто: смена стратегии, ошибки, новая версия, конец паузы</small></span><input type="checkbox" data-key="notifications" /><i></i></label>
         <label class="toggle"><span><b>Сворачивать в трей</b><small>Крестик прячет окно, обход продолжает работать</small></span><input type="checkbox" data-key="close_to_tray" /><i></i></label>
       </div>
 
@@ -193,6 +213,21 @@
             <button data-v="system">Системная</button><button data-v="light">Светлая</button><button data-v="dark">Тёмная</button>
           </div>
         </div>
+        <div class="field">
+          <span><b>Горячие клавиши</b><small><kbd>Ctrl</kbd>+<kbd>Enter</kbd> — включить/выключить · <kbd>F5</kbd> — проверить доступ · <kbd>Ctrl</kbd>+<kbd>1</kbd>…<kbd>5</kbd> — вкладки · <kbd>Esc</kbd> — в трей</small></span>
+        </div>
+      </div>
+
+      <div class="glass card">
+        <h3><span class="h3-ic"><svg viewBox="0 0 24 24"><path d="M12 4v11" /><path d="M7.5 10.5 12 15l4.5-4.5" /><path d="M5 19.5h14" /></svg></span>Обновления Prosvet</h3>
+        <div class="field">
+          <span><b>Prosvet <span id="app-cur"></span></b><small><span id="app-update-text">Новые версии — из релизов GitHub, с проверкой SHA-256</span> · <a href="#" id="app-notes-link">что нового</a></small></span>
+          <div class="row">
+            <button class="btn" id="btn-app-check">Проверить</button>
+            <button class="btn primary" id="btn-app-install" hidden>Установить</button>
+          </div>
+        </div>
+        <label class="toggle"><span><b>Проверять автоматически</b><small>При запуске и раз в 12 часов. Устанавливается только по вашей кнопке</small></span><input type="checkbox" data-key="app_update_check" /><i></i></label>
       </div>
 
       <div class="glass card">

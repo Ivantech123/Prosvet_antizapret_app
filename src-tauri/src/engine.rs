@@ -1,20 +1,23 @@
-//! Запуск и остановка winws / winws2.
+//! Запуск и остановка движков.
 //!
-//! Процесс помещается в Job Object с KILL_ON_JOB_CLOSE: если Prosvet упадёт
+//! Windows: winws / winws2 в Job Object с KILL_ON_JOB_CLOSE — если Prosvet упадёт
 //! или будет убит, движок завершится вместе с ним и не оставит «висящий» обход.
+//! Linux: nfqws / nfqws2 запускает root-помощник (helper.rs) вместе с правилами nftables.
 
 use std::collections::VecDeque;
-use std::io::{BufRead, BufReader, Read};
 use std::path::Path;
-use std::process::{Child, Command, Stdio};
 use std::sync::{Arc, Mutex};
-use std::thread;
 
-use anyhow::{bail, Context, Result};
+use anyhow::{bail, Result};
+#[cfg(any(windows, test))]
+use anyhow::Context;
+#[cfg(any(windows, test))]
+use std::process::{Command, Stdio};
 
 #[cfg(windows)]
 use std::os::windows::process::CommandExt;
 
+#[cfg(windows)]
 pub const CREATE_NO_WINDOW: u32 = 0x0800_0000;
 const LOG_CAP: usize = 800;
 
@@ -92,18 +95,68 @@ fn local_offset_secs() -> i64 {
     -(tz.bias as i64) * 60
 }
 
-#[cfg(not(windows))]
+#[cfg(unix)]
 fn local_offset_secs() -> i64 {
-    0
+    unsafe {
+        let t = libc::time(std::ptr::null_mut());
+        let mut tm: libc::tm = std::mem::zeroed();
+        libc::localtime_r(&t, &mut tm);
+        tm.tm_gmtoff as i64
+    }
 }
 
 pub struct Engine {
-    child: Option<Child>,
+    #[cfg(windows)]
+    child: Option<std::process::Child>,
     #[cfg(windows)]
     job: Option<job::Job>,
+    #[cfg(unix)]
+    helper: Option<crate::helper::Client>,
     pub current: Option<String>,
 }
 
+#[cfg(unix)]
+impl Engine {
+    pub fn new() -> Self {
+        Self { helper: None, current: None }
+    }
+
+    pub fn start(&mut self, id: &str, exe: &Path, args: &[String], log: &Log) -> Result<()> {
+        self.stop();
+        if !exe.exists() {
+            bail!("не найден {}", exe.display());
+        }
+        let (args, tcp, udp) = crate::strategy::split_wf(args);
+        if !self.helper.as_mut().is_some_and(|h| h.running()) {
+            log.push("Нужны права администратора — введите пароль в системном окне");
+            self.helper = Some(crate::helper::Client::spawn(log)?);
+        }
+        let h = self.helper.as_mut().expect("помощник запущен");
+        if let Err(e) = h.start(exe, args, tcp, udp) {
+            if !h.running() {
+                self.helper = None;
+            }
+            return Err(e);
+        }
+        log.push(format!("▶ {id}"));
+        self.current = Some(id.to_string());
+        Ok(())
+    }
+
+    pub fn stop(&mut self) {
+        if self.current.take().is_some() {
+            if let Some(h) = self.helper.as_mut() {
+                let _ = h.stop();
+            }
+        }
+    }
+
+    pub fn alive(&mut self) -> bool {
+        self.current.is_some() && self.helper.as_mut().is_some_and(|h| h.alive())
+    }
+}
+
+#[cfg(windows)]
 impl Engine {
     pub fn new() -> Self {
         Self {
@@ -176,8 +229,10 @@ impl Drop for Engine {
     }
 }
 
-fn pipe(r: impl Read + Send + 'static, log: Log) {
-    thread::spawn(move || {
+#[cfg(windows)]
+fn pipe(r: impl std::io::Read + Send + 'static, log: Log) {
+    use std::io::{BufRead, BufReader};
+    std::thread::spawn(move || {
         let reader = BufReader::new(r);
         for line in reader.split(b'\n').map_while(Result::ok) {
             let s = String::from_utf8_lossy(&line).trim_end().to_string();
@@ -190,7 +245,7 @@ fn pipe(r: impl Read + Send + 'static, log: Log) {
 }
 
 /// Служебные строки движка, которые при каждом запуске одинаковы.
-fn is_noise(line: &str) -> bool {
+pub(crate) fn is_noise(line: &str) -> bool {
     const NOISE: &[&str] = &[
         "Loading hostlist", "Loading ipset", "loading plain text", "Loaded ", "we have ",
         "LUA v", "JIT: ", "github version", "windivert initialized",
